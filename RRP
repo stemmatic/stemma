@@ -1,0 +1,76 @@
+2010/01/23 - Reticulation ReCosting Project
+
+The goal of this project is to implement the new scoring
+function for mixed nodes.  Originating states on mixed
+nodes are now to be costed as 1 per each parent, not just
+1 as before.
+
+Phases:
+
+1. Refactorings, with regression testing.
+
+a. Remove #if DO_BASE (now always true), subst in BASE,PERM macros
+b. Rename Taxon.vunits to Taxon.rdgs
+c. Hoist the [vv] access out of txVunit(tx,i,v) => txRdgs(tx,i)[v]
+d. Hoist the [vv] access out of txVbase(tx,i,v) => txBase(tx,i)[v]
+e. Hoist the [vv] access out of txIsSing(tx,i,v) => txIsSingular(tx,i)[vv]
+f. tx->taxa[i].base aliases tx->states[i], so convert both to tx->base[i]
+g. Hoist tx->taxa[i].boot
+h. Hoist tx->taxa[i].rdgs to tx->rdgs[i]
+i. Merge st[BV]Kids() into stKids()
+j. Merge st[BV]Folks() into stFolks()
+k. Merge st[BV]InLaws() into stInLaws()
+l. Eliminate stSimple(), have st{Kids,Folks,InLaws}() return useful values.
+m. Eliminate code for getenv("PRET")
+n. Remove unnecessary call to stFolks() in stSetSimp()
+o. Hoist txPermuteTaxon to end of stFixNode()
+p. Change Flag *nt->costs[] to Byte *nt->vcs[]
+
+2. Make Unit Tests
+a. Annotate lines that should change with RRP
+	RRP:vc = change to calculation of variant costs (vcs), 1 => nParents
+	RRP:sc = scoring change (mixed originations count more)
+	RRP:mx = maximum taxon cost
+b. Make stub uretcost.c
+c. Extend txFind() to find hypothetical nodes too.
+d. Made unit tests for various configurations where behavior is diff.
+e. Switch unit test results for ntCost() based on RRP macro.
+f. Switch cost result in umsg.c, umsg2.c
+g. Switch unit test results for vc calc in uretcost.c
+*. Make unit tests for routines with residual bugs
+
+3. Add new code with compile-time switch
+a. Set up RRP macro in stemma.h, controlled by DO_RRP
+b. R: Eliminate loan, loan2, #if 0 code, from hypAncestor().
+c. R: Drop time calc into stAncCost?
+d. R: Create nPars variable for use in state.c routines.
+e. R: Eliminate nParKids variable (was == nKids+1)
+f. R: Convert cost += bool to if (...) cost++;
+g. R: New logic in stRetLinkCost() to isolate RRP feature.
+h. Chg stRetLinkCost(), ntCost():assert to pass rcTest00
+i. R: Strength reduce total in stAncCost to isolate RRP change.
+j. Mod stAncCost() to pass rcTest21b (hyp, oneP, !isSimple)
+k. Mod stSetRet() to pass rcTest22a
+l. Mod stSetRet() to handle multiple parents of hypothetical
+m. Mod GP case stAncCost() to pass rcTest24b
+n. Bugfix in non-Simple case with all MISSING kids.
+o. Unit test and mod stSetSimp() code.
+p. Mod stAncCost() to handle root cases.
+q. Mod stAncCost() to handle extant, no kids.
+r. Mod stAncCost() to handle extant, oneP.
+s. Mod stAncCost() to handle GP extants.
+t. Mod stPolyCost() in non-Simple (ret)
+u. Mod ntIncRetLink() to scale results.
+v. New algo for stPolyCost() (ret)
+w. Given the new weights for mixed nodes, adjust the constaints to match.
+x. Implement Y-Constraint which became necessary with RRP
+
+4. Remove #if code.
+
+Functions to change:
+
+stLinkCost
+stAncCost
+stPolyCost
+stFixNode: stSetRet stSetSimp
+ntIncRetLink

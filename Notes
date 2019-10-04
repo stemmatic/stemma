@@ -1,0 +1,640 @@
+2018/18/8 - Config file?
+
+Am I at the point where instead of environment
+variable hacking, I just read an .init or .rc
+file? I can probably set up some primitive run
+scripting (do anneal, then ratchet, etc.) too.
+
+Should I also spin-off some threads to take
+advantage of different cores?
+
+2018/10/8 - Refactoring boot.c
+
+Mark has a couple of suggestions for refactoring
+boot.c:
+
+* He points out that the key partition trie functions,
+  ptTally() and ptWalk(), is passed in a parameter for
+  the depth of the assume an invariant that the
+  depth of the trie is tx->nExtant. Since this is invariant,
+  it should probably be stored in the partition trie data
+  structure and only initialized with tx->nExtant.
+
+* He also suggests using size_t instead of long for the
+  counts. ALthough it is not technically guaranteed to
+  match the pointer size, it will in GCC compilers on
+  reasonable architectures, at least better than 'long'.
+  Plus, semantically all the counts are unsigned.
+
+2018/10/7 - Force known witness links (CLINK feature)
+
+I can constrain the known links in ntHypConstrained()
+easily, but it only works if there's exactly one link
+I need to force. Otherwise, I'd have to do a link up to 
+make use that the invariant is set before that function
+is ever called.
+
+Since the constant links are between extant taxa, I can
+cache the &nt->connection[fr][to] pointer in a simple
+null-terminated list.
+
+I'm beginning to have my doubts that it's worth it. The
+known link is already at least a half-descriptus. If it
+links to another extant, then its presence in the tree
+is a surplusage.
+
+For now, the very preliminary code is guarded by an #if
+CLINK (for constant/constrained/corrector link) and turned
+off. The actual link is hard-coded for now, but eventually
+it could be controlled by an environment variable or even
+from reading the taxon names.
+
+2018/10/5 - Best solution code
+
+Probably should replace oldBest code in heur.c with
+cacheMark() and cacheCached().
+
+2018/09/27 - Getting back on the stemma train!
+
+Some things I've noticed or would like to fix/add:
+
+* Fix ROOTFIX. I have a 1pt file that exhibits the bug.
+  The problem seems to be that a stFixNode(nt, root) does
+  not seem to take into account changes to the cost as
+  a result of fixing the root node (especially a decrease).
+  This may require stPolyRootCost() to take a cost argument
+  and update or for a new stFixRoot(nt, cost) function to
+  exist.
+
+  For now, I turned off ROOTFIX, which probably turns off
+  a fix I need (where the cost goes up instead of down).
+
+* For debugging assistance, I should cache a description of
+  the tree modification that was successfully cached. It is
+  too late to know that when the assertion traps.
+
+* Constrain known links, e.g., 01:0 -> 01:1, to be in
+  the tree. As with year information, I do try to take into
+  account known information about the manuscripts as solution
+  constraints when producing a stemma.
+
+  ETA: see on 2018/10/7.
+
+* Output a hybrid tree format. They exist now.
+
+* Need to think more about reticulation issues. Does it affect
+  the bootstrap support? If so, I could try to maximize that.
+
+* A bit of a hack and it may be too slow, but I can snarf off
+  the boostrap support during the ratchet and work with that.
+  Of course, I'd have to reset the set counts every time a new
+  solution is cached. Perhaps I can try a boot-ratchet and see.
+
+2011/04/26 - MP2 concluding thoughts
+
+OK, first I thought that stFixNode() was going to be the way
+to go, but I had already lost track of the relevant kid states
+(in a loop) by the time I determined the hyp node's state.
+Also, stAncCost() was too convoluted to do the work there.
+
+Then, I decided to do this right after the stFixNode() calls
+in hyp.c, so I implemented a hypMixOK() routine that did my
+check.  It turned out that I only needed to do this in hypPoly(),
+which was nice because it was very slow.
+
+Yet, hypPoly() does not call stAncCost() but stPolyCost() and
+that routine, because of the severe topological restrictions,
+would keep the relevant kid state information around to do an
+integrated MP2 constraint check.  There is a wrinkle, though:
+stPolyCost() operates in rdgs[], not base[].  This could be an
+incompatibility with ntIncRetLink().  Also, my plan of reducing
+the RET level may grandfather some old links that would not
+otherwise qualify.
+
+2011/04/25 - MP2 project, hypRemPoly() / stFixNode()
+
+Even with a successful (?) implementation of the change to
+ntIncRetLink(), I still get cases where I can violate the MP2
+constraint, all of which can be detected via stFixNode():
+
+[[ Actually, the stFixNode() approach isn't going to work.
+By the time I know the state, I will have already looped through
+the parents and kids.  So I need to reloop anyway and so the
+feature belongs in hyp.c ]]
+
+(1) hypRemPoly(): [1] -> DFG; [1] => [2] -> bd; Ambst => [2].
+When {[2]>[1]}, we have Ambst=>[1], and the MISSINGs from Ambst
+go against DFG due to Latin=>Greek.  An MP2 constraint on
+hypRemPoly() should prevent the mixture on [2]=bd from pushing
+up to [1]=DFG-bd.
+
+(2) hypPoly(): 01=>Ps; [1]=>Ps; [1]->[2]->075,1837. 
+When {[2]>[1]} and [1](Ps,075)=[3], the MISSINGs from 075 are
+imputed to [3].  An MP2 constraint on hypPoly() should prevent
+the second step, and, if the BACK step wasn't good enough, the
+first as well.
+
+2011/04/24 - MP2 project - ntIncRetLink()
+
+My last note seems to be incomplete, but what seems most promising
+now is to impose a constraint that no mixed parent have ?->[01]
+transitions exceed a preset amount.  It is slightly cleaner to do
+it on a per link basis, rather than on a total.
+
+[[ Can this constraint be imposed on *all* links?  It could, but
+single parents never seem to have more than a handful of MISSINGs
+unless extant. ]]
+
+My first place to implement it is in ntIncRetLink() and the results
+appear promising, but incomplete.  There is some leakage in the
+system.  Now, looking at in more detail, I really want to avoid
+doing it in ntHypConstrained(), which is probably too expensive and
+possibly too late.  A good place, on the other hand, is stFixNode(),
+which is already doing the relevant looping.
+
+One configuration is [1] -> A, B; [2] => B, where all of the B==[2]
+cases will cause [1] to go MISSING if A is MISSING.  Yet these will
+have lots of nMiss values for [1]=>B.  (Example, [3]=>MVict,Ambst;
+MVict has two large chunks missing and so a link to Ambst from FG
+will cause of the Ambst rdgs in [3] that are paralleled in FG to go
+MISSING.)
+
+On this configuration, [2] will link to B, and then A,B will unpoly
+into [1]'s parent and repoly as a new [1], but with all the MISSING
+values.  This means I can't stop this either at the hypPolyRR() or
+hypPoly() phase, but I must catch it earlier, at ntIncRetLink().
+Fortunately, I don't need to do a full stFixNode on [1], but I can
+predict it with nMiss += (A == MISS) && (B != MISS) && (B == [2]).
+
+2011/04/10 - Latest Thinking on MISSING Mixed Parents
+
+Ever since noticing a few odd Latin -> Greek mixtures in caes
+back in 2005, I've been struggling over how to account for them.
+
+The first attempt was RRP, to count each differing parent for a
+mixed child apography.  While this seems to stop some "bad" mixtures,
+it also tended to optimize away mixed child apographies.  This
+meant I didn't have the apography evidence (Leitfehler) to
+demonstrate that such mixed child groups where real.  On this date,
+I removed the RRP switches for this project (except in Utest), in
+order to allow future refactorings / performance enhancements.
+
+The next attempt was MMP, which counted ?->0 etc. transitions
+extra.  This only seemed to stop some "bad" mixtures, and it had
+the unintended effect of imputing all sorts of non-MISSING states
+into (Latin) traditions that couldn't possibly hold those values.
+On this date, I also removed the MMP switches (except in Utest).
+
+---
+
+2011/03/23 - Disappointing Results of MISSING Mixed Parents project
+
+After implementing the feature, after many test cases and a few
+bugs that missed the test cases, I was able to see what MMP does to
+the stemmata.  The answer appears to me: not much.  With the new
+cost structure, the character inference of h->??[0<0] is so strong
+that h gets the value of 0 and one no longer has subtrees with
+MISSING values.  They were filled from a mixed node.  This means
+that it was not successful in avoiding Latin/Greek to Greek
+mixtures.  Furthermore, because D:0 contains MISSING characters,
+MPP manages to avoid making D:0 the immediate parent of either
+D:1 or D:2.  Not good.
+
+This means that the costing approach is not likely to work.  So
+my current thinking is that a constraint approach may be more
+fruitful.  Here, I would tally up some fitness score for each
+reticulation, e.g. cost + ?->0 transitions (as per MMP), perhaps
+also RRP as well.  Then I would reject any mixture whose score
+exceeds a threshold.  I realize this threshold may be another
+magic number, but I could finesse it by either equating this
+threshold to the reticulation cost, or perhaps doing away with
+the reticulation cost altogether.  Only hacking around will tell.
+
+2011/03/10 - Additional Note on MISSING Mixed parents
+
+One issue that I've noticed is that the vc[]s are not the
+right values for MMP cases.  After much thought, I think it
+is impossible to cleanly have the vc[]s reflect the MMP cost
+per node.  If I do, then the vc[]s no longer indicate parental
+transitions.  For example, 0?->0 should have a vc[] of 0.
+
+The problem is that I cannot differentiate in stRetLinkCost()
+between 10->0 and ?0->0.  The former has to cost 0, while the
+latter has to cost 1.  Better to overlay the ?->0 charge
+directly into vcost and leave it out of vc[], rather than try
+to handle it.
+
+What to do about ntDiffLinks()?  I'll need to loop back in
+the MISSING parents.  Arrgh!
+
+2011/02/10 - MISSING Mixed Parents
+
+My first inclination in discouraging mixed parents with MISSING
+states was to cost any mixed node as 1 (or nPars w/ RRP1) if there
+is a mixed MISSING parent.  Unfortunately, the logic becomes hairy
+to ensure that the cost maxes out at 1 no matter what order the
+parents are encountered.  It occurs to me, however, that if I just
+add an extra 1 for a MISSING parent, I'll basically get the same
+effect.  True, it will cost more for a 0,?->1 transition (as 2),
+but this becomes just like RRP1 for this situation.
+
+I'll have to check if there are some interesting edge cases, esp.
+in conjunction with RRP1, relating to the state logic.  It might
+also have to affect the heavily tuned loop in ntIncLink()...
+
+2011/02/09 - More Mixture Logic
+
+I'm still getting frustrated, even with the implementation of
+RRP1 (which counts apomorphies in mixed nodes in accordance
+with the number of the parents, rather than one).  It still
+happens, not infrequently, for secondary, but emptier strands
+of the textual tradition to become parents, via mixture, of
+fuller descendents.  For example, the Latins b d vg etc. are
+sometimes, in various runs, the parents of DFG, using mixture
+to add back in DFG the articles that had been lost via the
+Old Latin parentage.
+
+This problem reduced somewhat with RRP1, but has not totally
+fixed it.  Also, with RRP1, many mixed nodes had no apographies
+at all, which makes it harder to give apographic evidence for
+why the (mixed) node should be thought to exist.
+
+The main thing I want to avoid is parents of mixed nodes
+having lots of MISSING values.  I'm already avoiding this for
+normal parents, by costing the ? -> 0 transition as a 1.
+Now, I need to propose a rule for the 0,?->0 cases.
+
+One idea, like the old time code, is to break ties against
+those solutions that have mixed node parents with MISSING values.
+One way is to sum up the MISSING cases and minimize those.
+Another is to calculate the overlap and maximize the overlap
+(or minimize the non-overlap).  If there is some way to take
+these values, I could create a per node reticulation cost that
+could solve my magic number problem for the reticulation cost.
+Hmm.  Best to play around and see what pops out.
+
+2010/08/04 - Rooting
+
+Now that the TIME code has been permanently retired, it turns
+that that the root node can get funky.  For example, in gal
+there was a root node [3] with the following kids: P (almost
+frag), x1837, x2464, Marc (frag), and [6].  Yet, if [6]->[3]
+instead, then node [3] is constrained away, because the two
+mixtures outvote P.  That P is barely passes the fragmentary
+threshold only meant that even more variants would be vacuumed
+up into [3].
+
+The solution to this is to recognize that the constraint
+calculation had assumed an implicit unmixed participant: the
+parent.  But root doesn't have a parent, so it was necessary
+to reduce the number of unmixed supporters for a root node by
+one.  This seems to clear up the problem, and, for now, renders
+unnecessary to need to explicitly rotate the stemma to the
+fewest root cost.  This can happen in hypPolyRR() now that the
+root won't be so encumbered with fragmentary and quasi-fragmentary
+children.
+
+2010/08/03 - Time code and future plans
+
+I decided to #if out the time code (for stratocladistics).
+It introduced an unacceptable amount of arbitrariness that
+I'm finding difficult to justify.  Eventually, I'll refactor
+it out completely.
+
+Current projects on the plate to get the program into shape
+for the diss are:
+
+1. Minor improvements to controlling the search.  I'm pushing
+the do_all etc. shell scripts into stemma.c.
+
+2. With the time code gone, getting the most primitive default
+rooting right is a priority.  There has always seemed to be a
+problem here, which the time code obscured.
+
+3. Must implement RPP!
+
+2010/05/12 - SORTLINKS
+
+I'm not sure whether to turn SORTLINKS on or off.  It was
+originally present for backward compatibility, but it seems
+to slightly improve the performance.  Odd.
+
+2010/01/23 - Reticulation ReCosting Project
+
+The basic idea is to change the cost calculation for mixed
+nodes to penalize each origination by the number of parents
+instead of by 1 (as with an unmixed node).  [Origination is
+getting a new state (other than MISSING) not found in any
+of the parents.]
+
+The basic way to do this is to initialize the nt->costs[t][v]
+with nParents, and fix up the logic as it goes.  Unfortunately,
+there has been a conflation with the 1 of the cost and the
+logic of there being an origination.  This will need to be
+teased out.
+
+See file ./RRP, for Notes and ToDo list for the RRP project.
+
+2010/01/09 - Missing Value Issues
+
+Dealing with missing values have always been a major area
+of concern for stemma.  Many of the manuscript witnesses
+are lacunose, and the versional witnesses simply cannot
+transmit all the (syntactic) features of the Greek originals.
+The following discussion here documents the decisions I
+had to make to deal with missing in the order as I remember
+them:
+
+1.  The first issue came up early.  I originally let changes
+to and from missing (?) be a free pass.  This was to not
+allow missing values become apographies.  Unfortunately, it
+led to many lacunose manuscripts becoming ancestors to fuller
+ones.  Therefore, I decided to impose a cost for the ? -> 0,1
+transition.  This ended up forcing lacunose mss from ancestral
+nodes to leaf nodes.
+
+2.  Another issue involves non-overlapping lacunose mss.  In
+some early runs, they tended to cluster under the same ancestral
+node, each contributing different portions to the text of the
+hypothetical answer.  What's worse is that this node often
+became a reticulation parent for other, attested witnesses,
+which led eventually (with aggressive searching) to sorting out
+the variants among two different hypothetical ancestors and
+having the attested mss become various kinds of mixtures of
+these.
+
+My conclusion was that such a state of affairs was a violation
+of Weitzman's bipolarity assuming, because such cobbled together
+hypothetical ancestors were not sufficiently evidenced across
+the entire text to be an actual pole.  Rather, it was an artificial
+conglomeration of variant readings.  Therefore, I began to classify
+manuscripts as "fragmentary" (unfortunately, arbitrarily set at
+a 2/3 level) and forbade fragmentary descendents to out-number
+non-fragmentary descendents.
+
+3.  Another thing I did in state reconstruction is to make the
+hypothetical ancestral state MISSING when all the children are
+MISSING.  Otherwise, the parental non-MISSING state would just
+propagate down, and yield interpretations that an article (from
+Greek) or other un-Latin feature was propagating among the
+Latin tradition until the very end.
+
+4.  Eventually, I've begun to notice another mixture problem.
+With aggressive searching, it is becoming common for clearly
+secondary but emptier strands of text to become ancestors of
+mixed manuscripts.  I first noticed it in my Caesarean study
+for Mark, where D become a descendent of its Latin side, d.
+When I expanded the witnesses for the Caesarean study to include
+Matthew, I found that Matthew, with its many omissions of Mark
+become an ancestor for mixed texts.  Now, I've noticed the
+same thing for the Western text of Galatians, where the Old
+Latin mss become one of the ancestors of D-F-G.  While not
+completely non-sensical, this seems unlikely, and it led
+to pushing down Western variants, particularly in areas that
+the Latins could not transmit far down the stemma.
+
+What seems to be going on is that, where there is a substantial
+number of missing values on one parent, esp. Greek-only (or
+special Markan), these missing values can easily overwhelm the
+reticulation cost constraint and allow actual mixture to be
+detected at a much lower level.  Responding to this is hard,
+because one would have to somehow treat MISSING parent states
+the mixed parents differently, but how? and is the solution
+tractable.
+
+Looking at examples of actual mixtures in the Galatians tradition,
+esp. D:1, I noticed that actual mixtures accounts for most or a
+lot of the states of the result.  D:1 had only 4 apographies.
+Whereas, for bogus mixtures, the new apographies were almost as
+high as they would have been without the mixture.  For example,
+the dubiously mixed D:0 had 42 apographies.  The also dubious
+ancestor of D-F-G had 26 apographies (for a Reticulation cost of
+35).  It occurs to me that mixtures should have much of their
+states accounted for by their parents.  If a mixed node is also
+introducing a lot of new states (apographies) then something
+other than mixture maybe going on.  This suggests that costing
+an apography in a mixed node with only 1 step, may be understating
+the cost of the mixture.  Even with a choice of states, the
+scribe still goes his own way.  Thus, the cost for a state that
+differs from both parents ought to be more than for an unmixed
+MS.  I propose that in such cases, where there is an apography
+in a mixed node, the cost ought to be proportional to the
+number of parents.  Thus, apographies for a mixed node with
+two parent should count double.  Here's what makes this rule
+so good: if there are a lot of MISSING values from one parent
+(e.g. Latin or Matthew for Mark), then the apographies with
+respect to the other parent will count double and there will
+be a reasonable bias against using such.  On the hand, where
+the mixed parents are not having MISSING states, apographies
+are less likely to result.
+
+I haven't tested this yet, and it could turn out to be bogus,
+but it appears to be a computational feasible and theoretically
+plausible solution to my age old conundrum.
+
+Of course, implementing it will be tricky.  Because of necessary
+performance enhancements, the logic of stemma is not always
+apparent and equivalent functionality may be spread across
+different functions.  (I know, I know).  Therefore, it becomes
+more important than ever to have good unit testing and do the
+necessary regression testing.
+
+2010/01/09 - Renewed Beginnings
+
+I have decided to base my Duke dissertation around stemma.  
+This means that I'll be documenting the program in more 
+detail as I return to using it and understanding it more.  
+
+NB: The proposed Horizontal Encoding Feature was never 
+implemented, though it may eventually be, as part of a 
+possible performance/feature enhancement.  Currently, the 
+approach has been to be much aggressive about horizontal y 
+encoding variants, which makes almost all the variation 
+units (vu-s) binary.  This may allow for additional 
+compression and enhanced throughput.
+
+-------
+
+2005/07/27 - Horizontal Encoding Feature
+
+Problem: In the coding of versional witness, it is
+difficult to express support for only a subset of
+the character states; hence, such partial support
+had to be coded as '?' MISSING, losing information.
+
+Solution: convert the vunit from a quasi-vertical
+encoding (note: a special bit for SINGULAR and for
+up-weighted majority UPMAJ features) to a horizontal
+encoding.
+
+For backward compatibility, use this conversion table:
+
+Internal	External
+00000			-
+00001		0
+00010		1
+00011			a
+00100		2
+00101			b
+00110			c
+00111			d
+01000		3
+01001			e
+01010			f
+01011			g
+01100			h
+01101			i
+01110			j
+01111			k
+10000		4
+10001			l
+10010			m
+10011			n
+10100			o
+10101			p
+10110			q
+10111			r
+11000			s
+11001			t
+11010			u
+11011			v
+11100			w
+11101			x
+11110			y
+11111			z
+
+NB: States 5-9 would now signal an error.  MISSING '?' means all eight
+bits set.
+
+- 0x
+
+==== OLD NOTES ====
+11/12/01 - Continuous Track Analysis implementation
+
+Like Alroy's paper, but we include an explicit root
+(with UBS) values.
+
+Data Structure:
+
+T x T matrix, of from/to.  Count transitions.
+Transitions from root is free.  If a non-root
+has no ancestor, then count all.
+
+Algorithm:
+	1.  Initialize each taxon but root with 1, root gets 0
+	2.	For each taxon, zero children if states equal.
+	3.	Count 'em all.
+
+CRR:
+	1. Exhaustive: Delete a connection, try all reconnections.
+
+Forbid cycles.
+
+11/25/01
+
+Stratigraphic constraint?  I think so.
+
+Alroy proposes to replace triangles with Ys, with a hypothetical
+document at the center node.  Can we generalize this?  I.e., can
+be propose hypothetical sources and see if we reduce the length
+of the network?  We need to get a fast CRR/Link to work.
+
+What is the century value of a hypothetical source?  a-min(1,2)?
+
+We need a fast Link.  Like the fast Graft.  First, we remove a
+connection, calculate the cost.  Then try each from/to pair,
+try to calculate savings of extra cost.  We can do a branch
+and bound.  For example, if the possible savings at a to-node
+cannot go below the bound, then we can skip that to-node.
+
+Implement ratchet?  May need routines to save and restore
+state...
+
+11/26/01
+
+A Constraint file of forbidden connections can implement both
+the acyclic constraint and the stratigraphic constraints, as
+well as the generalizable no Greek witness can depend on a
+version...  Thus, the hypothetical source can merely constrain
+itself that it cannot depend on its actual sources...
+
+11/27/01
+
+Missing chars.  I have to implement this right.  The best
+value for the missing is the one which is represented by
+a maximum of the children.
+
+12/10/01
+
+Missing char/fast link code not completely working.  It is
+difficult to correctly account for the effect of the missing
+values in an incremental manner.  Therefore, I'm just really
+calling ntCost() and be done with it.
+
+01/01/02
+
+Hypothetic nodes: this is really just one way to add a link.
+
+For example, one can deancestrize a node: A -> B -> C
+becomes A -> [1] -> C, [1] -> B.
+
+Also, one can (partially) resolve a polychotomy: as in
+A -> B, C, D, E ==> A -> [1], D, E; [1] -> B, C.
+
+Presumably we can reverse the process on the remove a link
+phase.
+
+01/11/02
+
+Missing values.  I couldn't get the old Fast link working
+because the incremental missing values calculation proved
+too intractable.  Therefore, I had to call ntCost() all
+the time.  Program is very slow, and profiling show most
+all the time in ntCost().  Then I looked on-line for an
+algorithm and discovered it was equivalent to the minimum
+K-cut problem, which is NP-hard, especially if some of
+the nodes are predetermined (as is the case here), so I
+cannot make the generalized missing values work.
+
+Another problem with missing values: p45 in Mark becomes
+the root, in part because the lacunae can support anything.
+Really, when the witness is so lacunose the regular approach
+to falsifying ancestorship fails because not enough data
+was sampled to do.
+
+Solution: Don't resolve missing values.  Basically, treat
+them as lacunae.  Therefore, the cost of ? -> 1 is one,
+but 1 -> ? is zero.  This tends to force witnesses with
+large numbers of missing values onto leaf nodes, which
+is OK because that is the Wagner tree default position.
+When all the values are specified, the cost function
+becomes linear again, and the fastLink calculation can
+be performed.
+
+04/05/02
+
+Hypothetical nodes.  The big problem I noticed in the past
+couple months was the fact that it is possible for two or
+three hypothetical nodes to scoop up almost all of the
+variants between them so that any MS can be formed by
+picking and chosing one of the variant readings.  I had
+cases in which two node only shared 5% of the informative
+variants between themselves!
+
+This problem needs much additional thought.  My current
+approach is to constrain the stemmata so that a hypothetical
+node must have either two non-mixed descendents or one-mixed
+and one non-mixed descendents.  This constraint forces
+hypothetical nodes to be evidentiarily well-supported in
+that three mixed witnesses have to agree to support a
+particular reading in a hypothetical node/
+
+Future enhancements.
+
+1.  Create a persistent cache, for future analysis, check-
+point during long ratchets, etc.
+
+2.  Initialize the cache with the results of a pure
+cladistic analysis.
+
+3.  Get the root thing working...

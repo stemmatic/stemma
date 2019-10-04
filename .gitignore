@@ -1,0 +1,8 @@
+*.o
+stemma
+soln
+Bugs
+Utest
+foo*
+RCS
+RCSold

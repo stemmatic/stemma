@@ -1,0 +1,1144 @@
+/*
+	log.c - log results
+*/
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <assert.h>
+#include <math.h>
+#include <stdarg.h>
+
+#include "stemma.h"
+#include "taxon.h"
+#include "net.h"
+#include "netmsg.h"
+#include "cache.h"
+#include "boot.h"
+#include "log.h"
+
+struct Log {
+	int argc;
+	char **argv;
+
+	char *inbase;
+	char *outbase;
+};
+
+struct NetStats {
+	struct {
+		Cursor fr, to;
+		double pct;
+	} *retLinks;
+	int nEnd;
+	Cursor vu;
+};
+typedef struct NetStats NetStats;
+
+static void logStemma(FILE *log, Net *nt);
+static void logTree(FILE *log, Net *nt, NetStats *ns);
+static void logLinks(FILE *log, Net *nt);
+static void logChars(FILE *log, Net *nt, Cursor node, Cursor vv);
+static void logMixes(FILE *log, Net *nt, NetStats *ns);
+
+static void logAnnote(Log *lg, Net *nt, Cursor node);
+static void logApographies(Log *lg, Net *nt);
+static void logTaxonApographies(FILE *fpout, Net *nt, Cursor t, FILE *fpin);
+
+/////////////////////////////////////////////////////////////////
+
+
+struct LogFiles {
+	enum Logs id;
+	char *ext;
+	char *desc;
+} LogFiles[] = {
+	{ lgTAXA, ".tx",   "<taxon-file> Taxon-variant matrix", },
+	{ lgTIME, ".no",   "<con-file>   Stratigraphic constraints", },
+	{ lgVARS, ".vr",   "<var-file>   Listing of variants", },
+	{ lgSTEM, ".STEM", "             Stemma, nodes, links, and mixtures", },
+	{ lgAPOS, ".APOS", "             Apographies at each node", },
+	{ lgNOTE, ".NOTE", "             Annotated apparatus", },
+	{ lgBOOT, ".BOOT", "BOOT=<nreps> Bootstrap percentages", },
+	{ lgSTAT, ".STAT", "             Overall similarity statistics", },
+	{ lgMIXS, ".MIXS", "             Mixture results", },
+};
+
+Log *
+	logInit(int argc, char *argv[], int maxArg, char *usage)
+{
+	static Log lg[1];			// Not reentrant, but YNGNI
+	enum Logs ll;
+
+	// Sanity check my enum, struct array
+	for (ll = 0; ll < lgMAX; ll++) {
+		assert( ll == LogFiles[ll].id );
+	}
+
+	if (argc < 2 || argc > maxArg) {
+		fprintf(stderr, "Usage: %s infiles %s >diags\n", argv[0], usage);
+
+		fprintf(stderr, "Input and OUTPUT used files:\n");
+		for (ll = 0; ll < lgMAX; ll++) {
+			fprintf(stderr, "%.6s %s\n",
+				LogFiles[ll].ext, LogFiles[ll].desc);
+		}
+		
+		exit(-1);
+		return (Log *) 0;
+	}
+
+	lg->argc = argc;
+	lg->argv = argv;
+	lg->inbase = argv[1];
+	lg->outbase = argv[2];
+	if (!lg->outbase)
+		lg->outbase = lg->inbase;
+
+	return lg;
+}
+
+FILE *
+	logFile(Log *lg, enum Logs logExt)
+{
+	char filename[80];
+	char *fn = filename;
+	char *base, *mode;
+	char *ext = LogFiles[logExt].ext;
+	int ch;
+	FILE *fp;
+
+	// Set up output mode
+	if (logExt >= lgSTEM) {
+		base = lg->outbase;
+		mode = "w";
+	} else {
+		base = lg->inbase;
+		mode = "r";
+	}
+
+	// Just return extension if there's no base
+	if (!base)
+		strcpy(filename, ext+1);
+	else {
+		while ((ch = *fn++ = *base++) && ch != '.')
+			;
+		--fn;
+		while ((*fn++ = *ext++))
+			;
+	}
+
+	fp = fopen(filename, mode);
+	if (!fp)
+		perror(filename);
+	return fp;
+}
+
+void
+	logAnalysis(FILE *log, Net *nt)
+{
+	Taxa *tx = nt->taxa;
+	Cursor vv;
+	enum VarType n;
+	int count[nVarType];
+	char *txt[nVarType] = { "C", "S", "I", };
+
+	fprintf(log, "Witnesses: %d; ", tx->nExtant);
+
+	for (n = 0; n < nVarType; n++)
+		count[n] = 0;
+	for (vv = 0; vv < tx->nVunits; vv++)
+		count[tx->type[vv]]++;
+
+	fprintf(log, "Variants:");
+	for (n = 0; n < nVarType; n++) {
+		if (txt[n] > 0)
+			fprintf(log, " %s=%d", txt[n], count[n]);
+	}
+	fprintf(log, " Total=%d; ", tx->nVunits);
+
+	fprintf(log, "R= "CST_F" ", RetCost);
+	fprintf(log, "MP2= "CST_F"\n", MaxMP2);
+	if (nt->outgroup != -1)
+		fprintf(log, "Outgroup: %s\n", txName(tx,nt->outgroup));
+
+	if (count[Constant] > 0) {
+		fprintf(log, "Constant variation units:");
+		for (vv = 0; vv < tx->nVunits; vv++) {
+			if (tx->type[vv] == Constant)
+				fprintf(log, " %d", vv);
+		}
+		fprintf(log, "\n");
+	}
+
+	{
+		Cache *soln;
+		Length cost;
+
+		soln = cacheNew(nt);
+		cost = ntCost(nt);
+		ntPropagate(nt);
+		cacheSave(nt, cost, soln);
+		
+		fprintf(log, CST_F"-"RTC_F" u%.3f ",
+			cacheCost(soln), cacheRootCost(soln),
+			(double) cacheCost(soln)/cacheNodes(soln));
+		fprintf(log, "x%3d\n", cacheMixedNodes(soln));
+		cacheFree(nt, soln);
+	}
+}
+
+static void
+	logTaxonApographies(FILE *fpout, Net *nt, Cursor t, FILE *fpin)
+{
+	Taxa *tx = nt->taxa;
+	Cursor vv;
+	char verse[256];
+	char line[256];
+	char buffer[256];
+
+	int newVerse, newLine;
+	int mixed;
+	Cursor p;
+
+	fprintf(fpout, "Node %s (cost=" CST_F, txName(tx,t), nt->cumes[t]);
+	mixed = (nt->nParents[t] > 1);
+	if (mixed)
+		fprintf(fpout, ", %ld mix cost", RetCost * (nt->nParents[t]-1));
+	if (txFrag(tx,t))
+		fprintf(fpout, ", fragmentary");
+	fprintf(fpout, "):\n");
+
+	fprintf(fpout, "Extant descendents of %s:", txName(tx,t));
+	for (p = 0; p < tx->nExtant; p++) {
+		if (nt->inuse[t] && nt->descendents[t][p])
+			fprintf(fpout, " %s", txName(tx,p));
+	}
+	fprintf(fpout, "\n\n");
+
+	rewind(fpin);
+	ntCost(nt);		// Get the states
+	newVerse = newLine = NO;
+	for (vv = 0; vv < tx->nVunits; vv++) {
+		vunit tv = txVprint(tx,t,vv);
+		Cursor up, dn;
+		vunit pv;
+		unsigned wgt = 1;
+
+		if (nt->vcs[t][vv] == 0 && (nt->nParents[t] > 0 || tv == '0'))
+			continue;
+
+		// Advance in vr file to variation unit
+		while (fgets(buffer, sizeof buffer, fpin)) {
+			Cursor v;
+			char *end;
+			v = (Cursor) strtol(buffer, &end, 10);
+
+			// Weighted vunits only have the last number listed in the
+			// .vr file, so advance vv (and tv) to what we've read.
+			if (v > vv) {
+				wgt = v-vv+1;
+				vv = v;
+				tv = txVprint(tx,t,vv);
+			}
+
+			if (buffer != end && v == vv)
+				break;
+			else if (*buffer == '@') {
+				strcpy(verse, buffer);
+				newVerse = YES;
+			} else if (*buffer == '>') {
+				strcpy(line, buffer);
+				newLine = YES;
+			}
+		}
+		
+		if (newVerse) {
+			fputs(verse, fpout);
+			newVerse = NO;
+		}
+		if (newLine) {
+			fputs(line, fpout);
+			newLine = NO;
+		}
+		fprintf(fpout, "%c%c%s", tv,
+			(tx->type[vv] == Singular || txIsSingular(tx,t)[vv])
+				? '*' : ' ',
+			buffer);
+
+		{
+			fprintf(fpout, "       ");
+			for (up = nt->Ups[t]; up != -1; up = nt->br[up].nxtUp) {
+				p = nt->br[up].fr;
+				pv = txVprint(tx,p,vv);
+				fprintf(fpout, " %s(%c)", txName(tx,p), pv);
+			}
+			fprintf(fpout, " -> %s(%c)", txName(tx,t), tv);
+			if (nt->nChildren[t] > 0)
+				fprintf(fpout, " ->");
+			for (dn = nt->Dns[t]; dn != -1; dn = nt->br[dn].nxtDn) {
+				p = nt->br[dn].to;
+				pv = txVprint(tx,p,vv);
+				fprintf(fpout, " %s(%c)", txName(tx,p), pv);
+			}
+			fprintf(fpout, "\n\n");
+		}
+		logChars(fpout, nt, t, vv);
+
+		if (wgt > 1)
+			fprintf(fpout, "Weight: %u\n\n", wgt);
+	}
+
+	fprintf(fpout, "\n");
+}
+
+static void
+	logApographies(Log *lg, Net *nt)
+{
+	FILE *fpin, *fpout;
+	Cursor t;
+
+	fpin = logFile(lg, lgVARS);
+	if (!fpin) {
+		perror("logApographies note-infile");
+		return;
+	}
+
+	fpout = logFile(lg, lgAPOS);
+	if (!fpout) {
+		perror("logApographies note-outfile");
+		fclose(fpin);
+		return;
+	}
+
+	for (t = 0; t < nt->maxTax; t++) {
+		if (!nt->inuse[t])
+			continue;
+		logTaxonApographies(fpout, nt, t, fpin);
+	}
+	fprintf(fpout, "\n");
+
+	fclose(fpout);
+	fclose(fpin);
+}
+
+#define MMAX (5) // Cheap limit
+
+static void
+	logMixParentage(FILE *log, Net *nt, Cursor t, NetStats *ns)
+{
+	Taxa *tx = nt->taxa;
+	Cursor p1, p2, vv;
+	int nn;
+	double mrdgs[5];		// Mixed readings per parentage
+	Cursor mpars[5];		// Identities of the parentage
+	int mps = 0;			// Number of mixed parents
+	double nMixRdgs = 0.0;	// Number of mixed readings
+	int nOverlaps = 0;		// Overlap of the parents
+	int nMiss = 0;			// Number of missing parents states
+
+	fprintf(log, "Mixed Node %s (cost "CST_F" > RetCost"CST_F"):\n",
+		txName(tx,t), nt->cumes[t], RetCost*(nt->nParents[t]-1)); 
+	for (p1 = 0; p1 < nt->maxTax; p1++) {
+		if (!nt->inuse[p1])
+			continue;
+		if (!nt->connection[p1][t])
+			continue;
+		nn = 0;
+		nMiss = 0;
+		fprintf(log, "\t%s:", txName(tx,p1));
+		for (vv = 0; vv < tx->nVunits; vv++) {
+			if (txRdgs(tx,p1)[vv] == MISSING && txRdgs(tx,t)[vv] != MISSING)
+				nMiss++;
+			if (txRdgs(tx,t)[vv] != txRdgs(tx,p1)[vv])
+				continue;
+			for (p2 = 0; p2 < nt->maxTax; p2++) {
+				if (!nt->inuse[p2])
+					continue;
+				if (!nt->connection[p2][t])
+					continue;
+				if (p2 == p1)
+					continue;
+				if (txRdgs(tx,t)[vv] == txRdgs(tx,p2)[vv]
+				|| txRdgs(tx,p2)[vv] == MISSING)
+					break;
+			}
+			if (p2 < nt->maxTax)
+				continue;
+			nn++;
+		}
+		fprintf(log, " ---> %d (?%d)\n", nn, nMiss);
+		if (mps == MMAX)
+			continue;
+		nMixRdgs += nn;
+		mrdgs[mps] = nn;
+		mpars[mps] = p1;
+		mps++;
+	}
+	fprintf(log, "Mixed %%ages:");
+	for (nn = 0; nn < mps; nn++) {
+		fprintf(log, " %s=%.0f%%", txName(tx,mpars[nn]),
+			100.0*mrdgs[nn]/nMixRdgs);
+		if (ns) {
+			ns->retLinks[ns->nEnd].fr = mpars[nn];
+			ns->retLinks[ns->nEnd].to = t;
+			ns->retLinks[ns->nEnd].pct = 100.0*mrdgs[nn]/nMixRdgs;
+			ns->nEnd++;
+		}
+	}
+	fprintf(log, "\n");
+
+	// Calculate overlapping amount
+	for (vv = 0; vv < tx->nVunits; vv++) {
+		for (nn = 1; nn < mps; nn++) {
+			if (txRdgs(tx,mpars[nn])[vv] != txRdgs(tx,mpars[0])[vv])
+				break;
+		}
+		if (nn == mps)
+			nOverlaps++;
+	}
+	// Calculate MISSING Mixed Parentage:
+	nMiss = 0;
+	for (vv = 0; vv < tx->nVunits; vv++) {
+		for (nn = 0; nn < mps; nn++) {
+			if (txRdgs(tx,mpars[nn])[vv] == MISSING
+			&& txRdgs(tx,t)[vv] != MISSING)
+				nMiss++;
+		}
+	}	
+	fprintf(log, "Overlaps: %d (nV-= %d), nV-OLs-nMixRdgs: %d ; nMiss: %d\n\n",
+		nOverlaps, tx->nVunits - nOverlaps,
+		tx->nVunits - nOverlaps - (int) nMixRdgs, nMiss);
+}
+
+static void
+	logMixtures(Log *lg, Net *nt)
+{
+	Taxa *tx = nt->taxa;
+	Cursor t, vv;
+	char verse[256];
+	char line[256];
+	char buffer[256];
+
+	FILE *fpin, *fpout;
+
+	fpin = logFile(lg, lgVARS);
+	if (!fpin) {
+		perror("logMixtures note-infile");
+		return;
+	}
+
+	fpout = logFile(lg, lgMIXS);
+	if (!fpout) {
+		perror("logMixtures note-outfile");
+		fclose(fpin);
+		return;
+	}
+
+	for (t = 0; t < nt->maxTax; t++) {
+		int newVerse, newLine;
+		Cursor up, p;
+
+		if (!nt->inuse[t])
+			continue;
+		if (nt->nParents[t] < 2)
+			continue;
+
+		fprintf(fpout, "Mixed ");
+		logTaxonApographies(fpout, nt, t, fpin);
+		logMixParentage(fpout, nt, t, (NetStats *) 0);
+
+		ntCost(nt);		// Get the states
+
+		// Go through each parent that contributed the reading.
+		for (up = nt->Ups[t]; up != -1; up = nt->br[up].nxtUp) {
+			p = nt->br[up].fr;
+
+			fprintf(fpout, "Contributions from parent %s:\n\n",
+				txName(tx, p));
+			rewind(fpin);
+			newVerse = newLine = NO;
+			for (vv = 0; vv < tx->nVunits; vv++) {
+				vunit tv = txVprint(tx,t,vv);
+				vunit pv = txVprint(tx,p,vv);
+				Cursor u2, dn;
+				int mixed_here = NO;
+
+				if (nt->vcs[t][vv] > 0)
+					continue;
+				if (tv == STATES[MISSING])
+					continue;
+				if (tv != pv)
+					continue;
+
+				// Ignore variant units where all parents agree.
+				for (u2 = nt->Ups[t]; u2 != -1; u2 = nt->br[u2].nxtUp) {
+					Cursor p2 = nt->br[u2].fr;
+					char pv2 = txVprint(tx,p2,vv);
+					if (p2 == p)
+						continue;
+					if (pv2 != pv)
+						mixed_here = YES;
+				}
+				if (!mixed_here)
+					continue;
+	
+				// Advance in vr file to variation unit
+				while (fgets(buffer, sizeof buffer, fpin)) {
+					Cursor v;
+					char *end;
+					v = (Cursor) strtol(buffer, &end, 10);
+					if (buffer != end && v == vv)
+						break;
+					else if (*buffer == '@') {
+						strcpy(verse, buffer);
+						newVerse = YES;
+					} else if (*buffer == '>') {
+						strcpy(line, buffer);
+						newLine = YES;
+					}
+				}
+				
+				if (newVerse) {
+					fputs(verse, fpout);
+					newVerse = NO;
+				}
+				if (newLine) {
+					fputs(line, fpout);
+					newLine = NO;
+				}
+				fprintf(fpout, "%c%c%s", tv,
+					(tx->type[vv] == Singular || txIsSingular(tx,t)[vv])
+						? '*' : ' ',
+					buffer);
+
+				{
+					fprintf(fpout, "       ");
+					for (u2 = nt->Ups[t]; u2 != -1; u2 = nt->br[u2].nxtUp) {
+						Cursor p2 = nt->br[u2].fr;
+						vunit pv2 = txVprint(tx,p2,vv);
+						fprintf(fpout, " %s(%c)", txName(tx,p2), pv2);
+					}
+					fprintf(fpout, " -> %s(%c)", txName(tx,t), tv);
+					if (nt->nChildren[t] > 0)
+						fprintf(fpout, " ->");
+					for (dn = nt->Dns[t]; dn != -1; dn = nt->br[dn].nxtDn) {
+						Cursor p2 = nt->br[dn].to;
+						vunit pv2 = txVprint(tx,p2,vv);
+						fprintf(fpout, " %s(%c)", txName(tx,p2), pv2);
+					}
+					fprintf(fpout, "\n\n");
+				}
+			}
+		}
+		fprintf(fpout, "\n");
+	}
+	fprintf(fpout, "\n");
+
+	fclose(fpout);
+	fclose(fpin);
+}
+
+static void
+	logStemma(FILE *log, Net *nt)
+{
+	Link *work=0, *link=0, *end=0;
+
+	end = ntPreorderLinks(nt, &work);
+
+	// Loop over each character
+	for (link = work; link < end; link++) {
+		fprintf(log, ""NAM_F" "LNK_F" "NAM_F"; ",
+			txName(nt->taxa,link->from),
+			C_NLINK(nt,link->to),
+			txName(nt->taxa,link->to));
+	}
+	fprintf(log, "\n");
+	free(work);
+}
+
+static double
+	nsParentage(NetStats *ns, Cursor fr, Cursor to)
+{
+	Cursor t;
+	for (t = 0; t < ns->nEnd; t++) {
+		if (ns->retLinks[t].fr == fr && ns->retLinks[t].to == to)
+			return ns->retLinks[t].pct;
+	}
+	return 100.0;
+}
+
+static void
+	nsPrintState(FILE *fp, NetStats *ns, Taxa *tx, Cursor node)
+{
+	if (!ns || ns->vu == ERR)
+		return;
+	fprintf(fp, "{%c}", txVprint(tx,node,ns->vu));
+}
+
+static void
+	logInorder(Net *nt, FILE *fp, Cursor node, NetStats *ns, double pct)
+{
+	Taxa *tx = nt->taxa;
+	Cursor dn;
+	char prefix[16];
+
+	if (nt->nParents[node] > 1) {
+		sprintf(prefix, "%.0f%% ", pct);
+	} else
+		prefix[0] = EOS;
+	
+	if ((pct == 50.0) ? txVisit(tx,node) : (pct < 50.0)) {
+		fprintf(fp, "'%s"NAM_F"'", prefix, txName(tx,node));
+		nsPrintState(fp, ns, tx, node);
+		fprintf(fp, ":%lu", (unsigned long) nt->cumes[node]);
+		return;
+	}
+	txVisit(tx,node) = YES;
+
+	if (nt->nChildren[node] == 0) {
+		fprintf(fp, "'%s"NAM_F"'", prefix, txName(tx,node));
+	} else {
+		fprintf(fp, "(");
+		if (nt->nParents[node] > 1 || node < tx->nExtant) {
+			// Remove this conditional to label every internal node.
+			fprintf(fp, "'%s"NAM_F"':0, ", prefix, txName(tx,node));
+		}
+		for (dn = nt->Dns[node]; dn != -1; dn = nt->br[dn].nxtDn) {
+			Cursor kid = nt->br[dn].to;
+			pct = (nt->nParents[kid] > 1) ? nsParentage(ns, node, kid) : 100.0;
+			logInorder(nt, fp, kid, ns, pct);
+			if (nt->br[dn].nxtDn != -1)
+				fprintf(fp, ", ");
+		}
+		fprintf(fp, ")");
+	}
+	nsPrintState(fp, ns, tx, node);
+	fprintf(fp, ":%lu", (unsigned long) nt->cumes[node]);
+	return;
+}
+
+static void
+	logTree(FILE *log, Net *nt, NetStats *ns)
+{
+	Taxa *tx = nt->taxa;
+	Cursor tt;
+	
+	txUnvisit(tx);
+	for (tt = 0; tt < nt->maxTax; tt++) {
+		if (nt->nParents[tt] == 0 && nt->inuse[tt]) {
+			logInorder(nt, log, tt, ns, 100.0);
+			fprintf(log, ";\n");
+		}
+	}
+	fprintf(log, "\n");
+}
+
+
+static void
+	logLinks(FILE *log, Net *nt)
+{
+	Taxa *tx = nt->taxa;
+	Link *work=0, *link=0, *end=0;
+
+	end = ntPreorderLinks(nt, &work);
+	if (work == end) {
+		fprintf(log, "No links!\n");
+		free(work);
+		return;
+	}
+
+	fprintf(log, "Root: "NAM_F" %s |   %3ld %3ld\n",
+		txName(tx,work->from),
+		"                    " + strlen(txName(tx,work->from)),
+		nt->cumes[work->from],
+		txApographic(tx,work->from,nt->outgroup));
+
+	// Loop over each character
+	for (link = work; link < end; link++) {
+		Cursor to = link->to;
+		Cursor fr = link->from;
+		fprintf(log, "Link: "NAM_F" "LNK_F" "NAM_F" ",
+			txName(tx,fr), C_NLINK(nt,to), txName(tx,to));
+		fprintf(log, "%s |  ", "                "
+				+ strlen(txName(tx,fr)) + strlen(txName(tx,to)));
+		fprintf(log, " %3ld", nt->cumes[to]);
+		fprintf(log, " %3ld", txApographic(tx,to,nt->outgroup)); 
+#if DO_MP2
+		{
+			int vv, nMiss = 0;
+			for (vv = 0; vv < tx->nVunits; vv++) {
+				if (txRdgs(tx,fr)[vv] == MISSING
+				&& txRdgs(tx,to)[vv] != MISSING)
+					nMiss++;
+			}
+			if (nMiss > 0) fprintf(log, " ?%d", nMiss);
+		}
+#endif
+		fprintf(log, "\n");
+	}
+	fprintf(log, "\n");
+	free(work);
+}
+
+void
+	logStats(FILE *log, Net *nt)
+{
+	Taxa *tx = nt->taxa;
+	Cursor t1, t2;
+	Cursor vv;
+	Length diff, base;
+	double agr;
+	unsigned nSings = 0;
+
+	if (!log)
+		log = stderr;
+
+	fprintf(log, "Similarities over all readings:\n");
+	for (t1 = 0; t1 < nt->maxTax; t1++) {
+		if (!nt->inuse[t1])
+			continue;
+		fprintf(log, "Node %5s:\n", txName(tx,t1));
+		for (t2 = 0; t2 < tx->nExtant; t2++) {
+			if (!nt->inuse[t2])
+				continue;
+			fprintf(log, "%5s, ", txName(tx,t2));
+			diff = base = 0;
+			for (vv = 0; vv < tx->nVunits; vv++) {
+				vunit v1 = txVprint(tx,t1,vv);
+				vunit v2 = txVprint(tx,t2,vv);
+				if (v1 == '?' || v2 == '?')
+					continue;
+				base++;
+				if (v1 != v2)
+					diff++;
+			}
+			agr = 0.0;
+			if (base > 0)
+				agr = 100.0*((double) base - diff)/(double) base;
+			fprintf(log, "%.1f\n", agr);
+		}
+		fprintf(log, "\n");
+	}
+	
+	fprintf(log, "\nNumber of Singular Readings:\n");
+	for (t1 = 0; t1 < nt->maxTax; t1++) {
+		if (!nt->inuse[t1])
+			continue;
+		fprintf(log, "%5s, %d\n", txName(tx,t1), txNSings(tx,t1));
+		nSings += txNSings(tx,t1);
+	}
+	fprintf(log, "Average number of singular readings: %g (extant), %g (all)\n",
+		(double) nSings/tx->nExtant, (double) nSings/nt->nTaxa);
+
+	fprintf(log, "\nSimilarities over informative readings:\n");
+	for (t1 = 0; t1 < nt->maxTax; t1++) {
+		if (!nt->inuse[t1])
+			continue;
+		fprintf(log, "Node %5s:\n", txName(tx,t1));
+		for (t2 = 0; t2 < tx->nExtant; t2++) {
+			if (!nt->inuse[t2])
+				continue;
+			fprintf(log, "%5s, ", txName(tx,t2));
+			diff = base = 0;
+			for (vv = 0; vv < tx->nVunits; vv++) {
+				vunit v1 = txVprint(tx,t1,vv);
+				vunit v2 = txVprint(tx,t2,vv);
+				if (v1 == '?' || v2 == '?')
+					continue;
+				// Count non-singulars
+				if (txIsSingular(tx,t1)[vv] || txIsSingular(tx,t2)[vv])
+					continue;
+				base++;
+				if (v1 != v2)
+					diff++;
+			}
+			agr = 0.0;
+			if (base > 0)
+				agr = 100.0*((double) base - diff)/(double) base;
+			fprintf(log, "%.1f\n", agr);
+		}
+		fprintf(log, "\n");
+	}
+
+	fprintf(log, "\nPotential Ancestors/Descendents (CBGM):\n");
+	for (t1 = 0; t1 < tx->nExtant; t1++) {
+		if (!nt->inuse[t1])
+			continue;
+		fprintf(log, "Node %5s:\n", txName(tx,t1));
+		for (t2 = 0; t2 < nt->maxTax; t2++) {
+			int w1 = 0, w2 = 0;
+			if (!nt->inuse[t2])
+				continue;
+			fprintf(log, "%5s, ", txName(tx,t2));
+			diff = base = 0;
+			for (vv = 0; vv < tx->nVunits; vv++) {
+				vunit v1 = txVprint(tx,t1,vv);
+				vunit v2 = txVprint(tx,t2,vv);
+				if (v1 == '?' || v2 == '?')
+					continue;
+				if (v1 == '0' && v2 != '0')
+					w1++;
+				if (v2 == '0' && v1 != '0')
+					w2++;
+				base++;
+				if (v1 != v2)
+					diff++;
+			}
+			agr = 0.0;
+			if (base > 0)
+				agr = 100.0*((double) base - diff)/(double) base;
+			fprintf(log, "%.1f, %d %c %d\n", agr, w1, (w1 == w2) ? '=' : (w1 > w2) ? '>' : '<', w2);
+		}
+		fprintf(log, "\n");
+	}
+
+	fprintf(log, "\nPotential Siblings (CBGM fix):\n");
+	for (t1 = 0; t1 < tx->nExtant; t1++) {
+		if (!nt->inuse[t1])
+			continue;
+		fprintf(log, "Node %5s:\n", txName(tx,t1));
+		for (t2 = 0; t2 < nt->maxTax; t2++) {
+			int w1 = 0;
+			if (!nt->inuse[t2])
+				continue;
+			fprintf(log, "%5s, ", txName(tx,t2));
+			diff = base = 0;
+			for (vv = 0; vv < tx->nVunits; vv++) {
+				vunit v1 = txVprint(tx,t1,vv);
+				vunit v2 = txVprint(tx,t2,vv);
+				if (v1 == '?' || v2 == '?')
+					continue;
+				if (v1 == v2 && v1 != '0')
+					w1++;
+				base++;
+				if (v1 != v2)
+					diff++;
+			}
+			agr = 0.0;
+			if (base > 0)
+				agr = 100.0*((double) base - diff)/(double) base;
+			fprintf(log, "%.1f, %d\n", agr, w1);
+		}
+		fprintf(log, "\n");
+	}
+}
+
+static void
+	logSupporter(FILE *log, Net *nt, Taxa *tx, Cursor t)
+{
+	fprintf(log, " %s%s", (nt->nParents[t]>1) ? "%" : "", txName(tx,t));
+}
+
+static void
+	logRegEx(FILE *log, Net *nt, Taxa *tx, Cursor t)
+{
+	fprintf(log, "|%s%s%s$", (nt->nParents[t]>1) ? "% " : "^", (t < tx->nExtant) ? "" : "\\", txName(tx,t));
+}
+
+static void
+	logChars(FILE *log, Net *nt, Cursor node, Cursor vv)
+{
+	Taxa *tx = nt->taxa;
+	Cursor t;
+	char rdgs[256];
+	int rdg, nStates;
+	int m=0, s=0, g=0;	// For calculation of ci, ri.
+
+	ZERO(rdgs, dimof(rdgs));
+	fprintf(log, "Var %d: ", vv);
+	for (t = 0; t < nt->maxTax; t++) {
+		if (!nt->inuse[t])
+			continue;
+		rdg = txRdgs(tx,t)[vv];
+		if (nt->nParents[t] == 0)
+			fprintf(log, "%s:=%c%c ", txName(tx,t), txVprint(tx,t,vv),
+				(txIsSingular(tx,t)[vv]) ? '*' : ' ');
+		rdgs[rdg] = 1;
+	}
+	for (t = 0; t < nt->maxTax; t++) {
+		vunit tv;
+		if (!nt->inuse[t])
+			continue;
+		tv = txRdgs(tx,t)[vv];
+		if (nt->vcs[t][vv] > 0) {
+			fprintf(log, "%s=%c%c ", txName(tx,t), txVprint(tx,t,vv),
+				(txIsSingular(tx,t)[vv]) ? '*' : ' ');
+			s++;
+		}
+		if (t < tx->nExtant && tv != MISSING && tv != tx->majority[vv])
+			g++;
+	}
+
+	nStates = (tx->type[vv] == Informative) ? MAXSTATES : MISSING+1;
+	for (rdg = 0; rdg < nStates; rdg++) {
+		if (rdgs[rdg] == 0)
+			continue;
+		if (rdg != MISSING)
+			m++;
+		fprintf(log, "\n    %c :=", STATES[rdg]);
+		if (node == -1) {
+			for (t = 0; t < nt->maxTax; t++) {
+				if (!nt->inuse[t])
+					continue;
+				if (t >= tx->nExtant && nt->nParents[t] == 1)
+					continue;
+				if (txRdgs(tx,t)[vv] == rdg)
+					logRegEx(log, nt, tx, t);
+			}
+			fprintf(log, "\n        ");
+		} else {
+			for (t = 0; t < nt->maxTax; t++) {
+				if (!nt->inuse[t])
+					continue;
+				if (t >= tx->nExtant && nt->nParents[t] == 1)
+					continue;
+				if (!nt->descendents[node][t])
+					continue;
+				if (txRdgs(tx,t)[vv] == rdg)
+					logSupporter(log, nt, tx, t);
+			}
+			fprintf(log, "\n        ");
+			for (t = 0; t < nt->maxTax; t++) {
+				if (!nt->inuse[t])
+					continue;
+				if (t >= tx->nExtant && nt->nParents[t] == 1)
+					continue;
+				if (nt->descendents[node][t])
+					continue;
+				if (txRdgs(tx,t)[vv] == rdg)
+					logSupporter(log, nt, tx, t);
+			}
+		}
+	}
+
+	if (tx->type[vv] == Informative) {
+		fprintf(log, "\n");
+		--m;
+		fprintf(log, "ci=%.2f, ri=%.2f", (double) m/(double) s, 
+			((double) g - (double) s) / ((double) g - (double) m));
+	}
+	fprintf(log, "\n");
+	fprintf(log, "\n");
+}
+
+static void
+	logAnnote(Log *lg, Net *nt, Cursor node)
+{
+	char buffer[256];
+	FILE *fpin, *fpout;
+
+	fpin = logFile(lg, lgVARS);
+	if (!fpin)
+		return;
+
+	if ((fpout = logFile(lg, lgNOTE))) {
+		while (fgets(buffer, sizeof buffer, fpin)) {
+			Cursor v;
+			char *end;
+			fputs(buffer, fpout);
+			v = (Cursor) strtol(buffer, &end, 10);
+			if (buffer != end)
+				logChars(fpout, nt, node, v);
+		}
+		fclose(fpout);
+	}
+
+	fclose(fpin);
+}
+
+void
+	logUncollate(Log *lg, Net *nt, char *ms)
+{
+	char buffer[256];
+	FILE *fpin, *fpout;
+	Cursor node;
+
+	fpin = logFile(lg, lgVARS);
+	if (!fpin)
+		return;
+	if ((node = txFind(nt->taxa, ms)) == TXNOT)
+		return;
+
+#if 0
+	// Re-annotate the NOTES based on the node
+	logAnnote(lg, nt, node);
+#endif
+
+	sprintf(buffer, "MS-%s.txt", ms);
+	if ((fpout = fopen(buffer, "w")) != NULL) {
+		fprintf(fpout, "(UN)COLLATION of %s\n\n", ms);
+		while (fgets(buffer, sizeof buffer, fpin)) {
+			Cursor v;
+			char *end;
+			if (buffer[0] == '-')
+				continue;
+			v = (Cursor) strtol(buffer, &end, 10);
+			if (buffer != end) {
+				int rdg = txVprint(nt->taxa, node, v);
+				if (rdg == '0')
+					continue;
+				fprintf(fpout, "%c%c ", rdg,
+					(txIsSingular(nt->taxa,node)[v]) ? '*' : ' ');
+			}
+			fputs(buffer, fpout);
+		}
+		fclose(fpout);
+	}
+
+	fclose(fpin);
+}
+
+void
+	logResults(Log *lg, Net *nt)
+{
+	Length cost;
+	FILE *log;
+	char *envp;
+	struct NetStats ns[1] = { { 0, }, };
+
+	cost = ntCost(nt);
+	ntPropagate(nt);
+
+	block {
+		Cursor t;
+		char *vu = getenv("VU");
+		newmem(ns->retLinks, nt->nLinks);
+		for (t = 0; t < nt->nLinks; t++) {
+			ns->retLinks[t].fr = ns->retLinks[t].to = TXNOT;
+			ns->retLinks[t].pct = 0.0;
+		}
+		ns->nEnd = 0;
+		ns->vu = (vu) ? atoi(vu) : ERR;  // Which optional vu to annotate on the tree
+	}
+
+	log = logFile(lg, lgSTEM);
+	if (!log) {
+		fprintf(stderr, "Cannot write results to file, using stderr...\n");
+		log = stderr;
+	}
+
+	fprintf(log, "***********************\n");
+	if ((envp = getenv("RATCHETS")))
+		fprintf(log, "RACTHETS=%s ", envp);
+	if ((envp = getenv("CYCLES")))
+		fprintf(log, "CYCLES=%s ", envp);
+	if ((envp = getenv("BOOT")))
+		fprintf(log, "BOOT=%s ", envp);
+	if ((envp = getenv("TMP")))
+		fprintf(log, "TMP=%s ", envp);
+	if ((envp = getenv("OUTGRP")))
+		fprintf(log, "OUTGRP=%s ", envp);
+	if (lg->argv) {
+		int n;
+		for (n = 0; n < lg->argc; n++)
+			fprintf(log, "%s ", lg->argv[n]);
+		fprintf(log, "\n");
+	}
+	fprintf(log, "***********************\n\n");
+
+	logAnalysis(log, nt);
+
+	fprintf(log, "\n%d/%ld {%ld} ", nt->nLinks, cost, 0L);
+	logStemma(log, nt);
+	fprintf(log, "\n");
+
+	// Print apographies by taxon
+	logApographies(lg, nt);
+
+	// Print apographic taxa by variant
+	logAnnote(lg, nt, -1);
+
+	fprintf(log, "\n");
+
+	logLinks(log, nt);
+	logMixes(log, nt, ns);
+	logMixtures(lg, nt);
+	logTree(log, nt, ns);
+
+	logStats(logFile(lg, lgSTAT), nt);
+
+	fclose(log);
+}
+
+static void
+	logMixes(FILE *log, Net *nt, NetStats *ns)
+{
+	Cursor t;
+	int nMixes = 0;
+
+	for (t = 0; t < nt->maxTax; t++) {
+		if (!nt->inuse[t])
+			continue;
+		if (nt->nParents[t] < 2)
+			continue;
+
+		nMixes++;
+		logMixParentage(log, nt, t, ns);
+	}
+	fprintf(log, "Number of mixed nodes: %d\n\n", nMixes);
+}
+
+void
+	logBoot(Net *nt, Boot *bt, Log *lg)
+{
+	FILE *btfp;
+
+	btfp = logFile(lg, lgBOOT);
+	if (!btfp)
+		return (void) perror("BOOT");
+
+	bootPrint(btfp, nt, bt);
+
+	fclose(btfp);
+}
+
+///////////////////// Various Utilities ////////////////////
+
+#if 0
+static double
+	pear(double e0, double e1, double o0, double o1)
+{
+	double chi2 = 0.0, e = 0.0, o = 0.0;
+	double etot = e0 + e1;
+	double otot = o0 + o1;
+
+	e = e0 / etot * otot;
+	o = e - o0;
+	chi2 += o*o/e;
+
+	e = e1 / etot * otot;
+	o = e - o1;
+	chi2 += o*o/e;
+
+	return chi2;
+}
+
+/* Convert Chi^2 to P */
+static double
+	ChiSqP(int df, double x2)
+{
+   /* found on a web page */
+   double  p, t, k, a;
+
+   p = exp( -x2 / 2 );
+
+   if ((df & 1) > 0)
+         p *= sqrt( (x2+x2) / (atan(1.0)*4) );
+
+   k = df;
+   while (k >= 2) {
+         p *= x2 / k;
+         k -= 2;
+   }
+
+   t = p;  a = df;
+   while (t > (1.0E-7 * p)) {
+         a += 2;
+         t *= x2 / a;
+         p += t;
+   }
+
+   return 1.0 - p;
+}
+#endif
