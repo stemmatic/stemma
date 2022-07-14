@@ -6,9 +6,10 @@
 typedef struct Log Log;
 
 enum Logs {
-	lgTAXA, lgTIME, lgVARS,
+	lgTX, lgNO, lgVR,
 	lgSTEM, lgAPOS, lgNOTE,
 	lgBOOT, lgSTAT, lgMIXS,
+	lgVARS,
     lgMAX,
 };
 

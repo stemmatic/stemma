@@ -43,7 +43,10 @@ static void logMixes(FILE *log, Net *nt, NetStats *ns);
 
 static void logAnnote(Log *lg, Net *nt, Cursor node);
 static void logApographies(Log *lg, Net *nt);
+static void logTaxonHeader(FILE *fpout, Net *nt, Cursor t);
 static void logTaxonApographies(FILE *fpout, Net *nt, Cursor t, FILE *fpin);
+static Cursor logMRCA(Net *nt, Cursor mixedT, int *pnCAs);
+static int logBPviols(Net *nt, Cursor t, Cursor mrca);
 
 /////////////////////////////////////////////////////////////////
 
@@ -53,15 +56,16 @@ struct LogFiles {
 	char *ext;
 	char *desc;
 } LogFiles[] = {
-	{ lgTAXA, ".tx",   "<taxon-file> Taxon-variant matrix", },
-	{ lgTIME, ".no",   "<con-file>   Stratigraphic constraints", },
-	{ lgVARS, ".vr",   "<var-file>   Listing of variants", },
+	{ lgTX,   ".tx",   "<taxon-file> Taxon-variant matrix", },
+	{ lgNO,   ".no",   "<con-file>   Stratigraphic constraints", },
+	{ lgVR,   ".vr",   "<var-file>   Listing of variants", },
 	{ lgSTEM, ".STEM", "             Stemma, nodes, links, and mixtures", },
 	{ lgAPOS, ".APOS", "             Apographies at each node", },
 	{ lgNOTE, ".NOTE", "             Annotated apparatus", },
 	{ lgBOOT, ".BOOT", "BOOT=<nreps> Bootstrap percentages", },
 	{ lgSTAT, ".STAT", "             Overall similarity statistics", },
 	{ lgMIXS, ".MIXS", "             Mixture results", },
+	{ lgVARS, ".VARS", "             Collation variants for all nodes", },
 };
 
 Log *
@@ -189,21 +193,13 @@ void
 }
 
 static void
-	logTaxonApographies(FILE *fpout, Net *nt, Cursor t, FILE *fpin)
+	logTaxonHeader(FILE *fpout, Net *nt, Cursor t)
 {
 	Taxa *tx = nt->taxa;
-	Cursor vv;
-	char verse[256];
-	char line[256];
-	char buffer[256];
-
-	int newVerse, newLine;
-	int mixed;
 	Cursor p;
 
 	fprintf(fpout, "Node %s (cost=" CST_F, txName(tx,t), nt->cumes[t]);
-	mixed = (nt->nParents[t] > 1);
-	if (mixed)
+	if (nt->nParents[t] > 1)
 		fprintf(fpout, ", %ld mix cost", RetCost * (nt->nParents[t]-1));
 	if (txFrag(tx,t))
 		fprintf(fpout, ", fragmentary");
@@ -215,6 +211,22 @@ static void
 			fprintf(fpout, " %s", txName(tx,p));
 	}
 	fprintf(fpout, "\n\n");
+}
+
+
+static void
+	logTaxonApographies(FILE *fpout, Net *nt, Cursor t, FILE *fpin)
+{
+	Taxa *tx = nt->taxa;
+	Cursor vv;
+	char verse[256];
+	char line[256];
+	char buffer[256];
+
+	int newVerse, newLine;
+	Cursor p;
+
+	logTaxonHeader(fpout, nt, t);
 
 	rewind(fpin);
 	ntCost(nt);		// Get the states
@@ -298,7 +310,7 @@ static void
 	FILE *fpin, *fpout;
 	Cursor t;
 
-	fpin = logFile(lg, lgVARS);
+	fpin = logFile(lg, lgVR);
 	if (!fpin) {
 		perror("logApographies note-infile");
 		return;
@@ -406,9 +418,81 @@ static void
 				nMiss++;
 		}
 	}	
-	fprintf(log, "Overlaps: %d (nV-= %d), nV-OLs-nMixRdgs: %d ; nMiss: %d\n\n",
-		nOverlaps, tx->nVunits - nOverlaps,
-		tx->nVunits - nOverlaps - (int) nMixRdgs, nMiss);
+	fprintf(log, "nV(%d) - nOverlaps(%d) - nMixRdgs(%d) = %d ; nMiss: %d\n",
+		tx->nVunits, nOverlaps, (int) nMixRdgs, tx->nVunits - nOverlaps - (int) nMixRdgs, nMiss);
+
+	block {
+		int nCAs;
+		int mrca = logMRCA(nt, t, &nCAs);
+		int nBPviols = logBPviols(nt, t, mrca);
+		fprintf(log, "Common ancestors: %d; MRCA: %s; bi-polarity violations: %d\n\n", nCAs, txName(tx,mrca), nBPviols);
+	}
+}
+
+static Cursor
+	logMRCA(Net *nt, Cursor mixedT, int *pnCAs)
+{
+	Cursor anc, mrca;
+	int nCAs = 1;
+
+	mrca = ntRoot(nt);
+	nCAs = 1;
+	for (anc = 0; anc < nt->maxTax; anc++) {
+		Flag isCommonAncestor = YES;
+		Cursor up;
+		if (!nt->inuse[anc])
+			continue;
+		
+		// Check if every parent of mixedT is a descendent of anc
+		for (up = nt->Ups[mixedT]; up != -1; up = nt->br[up].nxtUp) {
+			Cursor p = nt->br[up].fr;
+			if (!nt->descendents[anc][p])
+				isCommonAncestor = NO;
+		}
+
+		// Check if this common ancestor is more recent than/a descendent of
+		// the one we've got.
+		if (isCommonAncestor) {
+			if (nt->descendents[mrca][anc])
+				mrca = anc;
+			else if (!nt->descendents[anc][mrca])
+				nCAs++;
+		}
+	}
+	if (pnCAs)
+		*pnCAs = nCAs;
+	return mrca;
+}
+
+static int
+	logBPviols(Net *nt, Cursor t, Cursor mrca)
+{
+	Taxa *tx = nt->taxa;
+	int nViols = 0;
+	Cursor vv;
+
+	// Just print out mix states
+	for (vv = 0; vv < tx->nVunits; vv++) {
+		Cursor up, p;
+		Flag hasCommonReading = YES;
+		Flag hasError = NO;
+
+		for (up = nt->Ups[t]; up != -1; up = nt->br[up].nxtUp) {
+			p = nt->br[up].fr;
+			if (txVprint(tx,p,vv) != txVprint(tx,mrca,vv)
+			&&  txVprint(tx,p,vv) != STATES[MISSING])
+				hasError = YES;
+			if (nt->br[up].nxtUp != -1) {
+				Cursor nxtUp = nt->br[up].nxtUp;
+				Cursor nxtP = nt->br[nxtUp].fr;
+				if (txVprint(tx,p,vv) != txVprint(tx,nxtP,vv))
+					hasCommonReading = NO;
+			}
+		}
+		if (hasCommonReading && hasError)
+			nViols += 1;
+	}
+	return nViols;
 }
 
 static void
@@ -416,13 +500,10 @@ static void
 {
 	Taxa *tx = nt->taxa;
 	Cursor t, vv;
-	char verse[256];
-	char line[256];
-	char buffer[256];
 
 	FILE *fpin, *fpout;
 
-	fpin = logFile(lg, lgVARS);
+	fpin = logFile(lg, lgVR);
 	if (!fpin) {
 		perror("logMixtures note-infile");
 		return;
@@ -436,7 +517,6 @@ static void
 	}
 
 	for (t = 0; t < nt->maxTax; t++) {
-		int newVerse, newLine;
 		Cursor up, p;
 
 		if (!nt->inuse[t])
@@ -445,13 +525,67 @@ static void
 			continue;
 
 		fprintf(fpout, "Mixed ");
-		logTaxonApographies(fpout, nt, t, fpin);
+		logTaxonHeader(fpout, nt, t);
 		logMixParentage(fpout, nt, t, (NetStats *) 0);
 
 		ntCost(nt);		// Get the states
 
+#if 1
+		// Print Interleaved mixture analysis
+		block {
+			Cursor mrca;
+			int nCAs = 0;
+
+			mrca = logMRCA(nt, t, &nCAs);
+
+			// Just print out mix states
+			for (vv = 0; vv < tx->nVunits; vv++) {
+				Flag hasCommonReading = YES;
+				Flag hasError = NO;
+				Flag hasApography = YES;
+				char buff[512];
+				char *bp = buff;
+				Cursor affinity = mrca;
+
+				bp += sprintf(bp, "%6u ", vv);
+				bp += sprintf(bp, " %c", txVprint(tx,t,vv));
+				bp += sprintf(bp, " <");
+				for (up = nt->Ups[t]; up != -1; up = nt->br[up].nxtUp) {
+					p = nt->br[up].fr;
+					bp += sprintf(bp, " %c", txVprint(tx,p,vv));
+					if (txVprint(tx,p,vv) != txVprint(tx,mrca,vv) && txVprint(tx,p,vv) != STATES[MISSING]) {
+						hasError = YES;
+						if (txVprint(tx,p,vv) == txVprint(tx,t,vv))
+							affinity = p;
+					}
+					if (nt->br[up].nxtUp != -1) {
+						Cursor nxtUp = nt->br[up].nxtUp;
+						Cursor nxtP = nt->br[nxtUp].fr;
+						if (txVprint(tx,p,vv) != txVprint(tx,nxtP,vv))
+							hasCommonReading = NO;
+					}
+					if (txVprint(tx,p,vv) == txVprint(tx,t,vv))
+						hasApography = NO;
+				}
+				if (hasApography)
+					affinity = t;
+				bp += sprintf(bp, " > ");
+				bp += sprintf(bp, " %c", txVprint(tx,mrca,vv));
+				if (hasError || hasApography)
+					fprintf(fpout, "%s %6s%s\n", buff, txName(tx, affinity), (hasCommonReading && hasError) ? " !!" : "");
+			}
+			fprintf(fpout, "\n\n");
+		}
+	
+#endif
+#if 0
 		// Go through each parent that contributed the reading.
 		for (up = nt->Ups[t]; up != -1; up = nt->br[up].nxtUp) {
+			int newVerse, newLine;
+			char verse[256];
+			char line[256];
+			char buffer[256];
+
 			p = nt->br[up].fr;
 
 			fprintf(fpout, "Contributions from parent %s:\n\n",
@@ -488,6 +622,14 @@ static void
 					Cursor v;
 					char *end;
 					v = (Cursor) strtol(buffer, &end, 10);
+
+					// Weighted vunits only have the last number listed in the
+					// .vr file, so advance vv (and tv) to what we've read.
+					if (v > vv) {
+						vv = v;
+						tv = txVprint(tx,t,vv);
+					}
+
 					if (buffer != end && v == vv)
 						break;
 					else if (*buffer == '@') {
@@ -532,6 +674,7 @@ static void
 			}
 		}
 		fprintf(fpout, "\n");
+#endif
 	}
 	fprintf(fpout, "\n");
 
@@ -648,7 +791,7 @@ static void
 		return;
 	}
 
-	fprintf(log, "Root: "NAM_F" %s |   %3ld %3ld\n",
+	fprintf(log, "Root: "NAM_F" %s |   %3ld %4ld\n",
 		txName(tx,work->from),
 		"                    " + strlen(txName(tx,work->from)),
 		nt->cumes[work->from],
@@ -663,8 +806,10 @@ static void
 		fprintf(log, "%s |  ", "                "
 				+ strlen(txName(tx,fr)) + strlen(txName(tx,to)));
 		fprintf(log, " %3ld", nt->cumes[to]);
-		fprintf(log, " %3ld", txApographic(tx,to,nt->outgroup)); 
-#if DO_MP2
+		fprintf(log, " %4ld", txApographic(tx,to,nt->outgroup)); 
+		fprintf(log, " %4ld", txApographic(tx,to,nt->outgroup)
+								- txApographic(tx,fr,nt->outgroup));
+#if 1 /* was: DO_MP2 */
 		{
 			int vv, nMiss = 0;
 			for (vv = 0; vv < tx->nVunits; vv++) {
@@ -841,12 +986,14 @@ static void
 {
 	Taxa *tx = nt->taxa;
 	Cursor t;
-	char rdgs[256];
+	Flag rdgs[256];
 	int rdg, nStates;
 	int m=0, s=0, g=0;	// For calculation of ci, ri.
 
-	ZERO(rdgs, dimof(rdgs));
 	fprintf(log, "Var %d: ", vv);
+
+	/* Find out which rdgs are attested for this vunit */
+	ZERO(rdgs, dimof(rdgs));
 	for (t = 0; t < nt->maxTax; t++) {
 		if (!nt->inuse[t])
 			continue;
@@ -854,8 +1001,10 @@ static void
 		if (nt->nParents[t] == 0)
 			fprintf(log, "%s:=%c%c ", txName(tx,t), txVprint(tx,t,vv),
 				(txIsSingular(tx,t)[vv]) ? '*' : ' ');
-		rdgs[rdg] = 1;
+		rdgs[rdg] = YES;
 	}
+
+	/* Print apographies */
 	for (t = 0; t < nt->maxTax; t++) {
 		vunit tv;
 		if (!nt->inuse[t])
@@ -870,14 +1019,19 @@ static void
 			g++;
 	}
 
+	/* Print which nodes have which reading */
 	nStates = (tx->type[vv] == Informative) ? MAXSTATES : MISSING+1;
 	for (rdg = 0; rdg < nStates; rdg++) {
-		if (rdgs[rdg] == 0)
+		/* Skip unattested readings */
+		if (rdgs[rdg] == NO)
 			continue;
+		
 		if (rdg != MISSING)
 			m++;
+
 		fprintf(log, "\n    %c :=", STATES[rdg]);
 		if (node == -1) {
+			/* Print regex of witnesses (for easy coloring of phylotree.hyphy.org trees) */
 			for (t = 0; t < nt->maxTax; t++) {
 				if (!nt->inuse[t])
 					continue;
@@ -888,6 +1042,7 @@ static void
 			}
 			fprintf(log, "\n        ");
 		} else {
+			/* Print two lines: first for descendents, then for non-descendents */
 			for (t = 0; t < nt->maxTax; t++) {
 				if (!nt->inuse[t])
 					continue;
@@ -912,6 +1067,7 @@ static void
 		}
 	}
 
+	/* Print some summary statistics, consistency index and retentiion index. */
 	if (tx->type[vv] == Informative) {
 		fprintf(log, "\n");
 		--m;
@@ -928,7 +1084,7 @@ static void
 	char buffer[256];
 	FILE *fpin, *fpout;
 
-	fpin = logFile(lg, lgVARS);
+	fpin = logFile(lg, lgVR);
 	if (!fpin)
 		return;
 
@@ -948,13 +1104,79 @@ static void
 }
 
 void
+	logVariants(Log *lg, Net *nt)
+{
+	Taxa *tx = nt->taxa;
+	char buffer[256];
+	FILE *fpin, *fpout;
+
+	fpin = logFile(lg, lgVR);
+	if (!fpin)
+		return;
+
+	fpout = logFile(lg, lgVARS);
+	if (!fpout)
+		return (void) perror("VARS");
+
+	while (fgets(buffer, sizeof buffer, fpin)) {
+		Cursor vv, rdg;
+		char *end;
+		int nStates;
+		
+		if (buffer[0] == '-')
+			continue;
+		vv = (Cursor) strtol(buffer, &end, 10);
+		if (buffer == end) {
+			fputs(buffer, fpout);
+			continue;
+		}
+
+		fprintf(fpout, "^");
+		fputs(buffer, fpout);
+
+		nStates = (tx->type[vv] == Informative) ? MAXSTATES : MISSING+1;
+		for (rdg = 0; rdg < nStates; rdg++) {
+			Cursor t;
+			int nMSS = 0;
+
+			/* Skip the collation reading (0) */
+			if (STATES[rdg] == '0')
+				continue;
+
+			/* Skip rdgs with no MSS */
+			for (t = 0; t < nt->maxTax; t++) {
+				if (!nt->inuse[t])
+					continue;
+				if (txRdgs(tx,t)[vv] == rdg)
+					nMSS++;
+			}
+			if (nMSS == 0)
+				continue;
+
+			/* Print out the witnesses for each variant */
+			fprintf(fpout, "=%c ", STATES[rdg]);
+			for (t = 0; t < nt->maxTax; t++) {
+				if (!nt->inuse[t])
+					continue;
+				if (txRdgs(tx,t)[vv] == rdg)
+					fprintf(fpout, " %s", txName(tx,t));
+			}
+			fprintf(fpout, " \n");
+		}
+	}
+	fclose(fpout);
+
+	fclose(fpin);
+}
+
+void
 	logUncollate(Log *lg, Net *nt, char *ms)
 {
 	char buffer[256];
 	FILE *fpin, *fpout;
 	Cursor node;
 
-	fpin = logFile(lg, lgVARS);
+	fpin = logFile(lg, lgVR);
 	if (!fpin)
 		return;
 	if ((node = txFind(nt->taxa, ms)) == TXNOT)
@@ -1056,7 +1278,10 @@ void
 	logMixtures(lg, nt);
 	logTree(log, nt, ns);
 
-	logStats(logFile(lg, lgSTAT), nt);
+	if ((envp = getenv("STATS")))
+		logStats(logFile(lg, lgSTAT), nt);
+
+	logVariants(lg, nt);
 
 	fclose(log);
 }

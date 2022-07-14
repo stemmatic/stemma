@@ -32,17 +32,17 @@ int
 	FILE *fcon;
 	Cache *curr;
 	int present;
-	char *cname, *envp;
+	char *cname, *ms;
 	Length got0, got1;
 
-	lg = logInit(argc, argv, 4, "[soln1 [soln2]]");
+	lg = logInit(argc, argv, 4, "[base [SOLN]]");
 
 	taxa = readTaxa(lg);
 	nt = ntNew(taxa);
 	MaxMP2 = taxa->nVunits / 20 + 1;
 
 	// Read constraints
-	if ((fcon = logFile(lg, lgTIME)) && ntConstraints(nt, fcon) != YES)
+	if ((fcon = logFile(lg, lgNO)) && ntConstraints(nt, fcon) != YES)
 		return -1;
 	fclose(fcon);
 
@@ -72,10 +72,10 @@ int
 		exit(-1);
 	}
 	
-	if (!getenv("NOREPORT"))
+	if ((ms = getenv("MS")))
+		logUncollate(lg, nt, ms);
+	else if (!getenv("NOREPORT"))
 		logResults(lg, nt);
-	if ((envp = getenv("MS")))
-		logUncollate(lg, nt, envp);
 
 	logAnalysis(stdout, nt);
 
@@ -93,7 +93,7 @@ static Taxa *
 	FILE *fTaxa;
 	Taxa *tx;
 
-	fTaxa = logFile(lg, lgTAXA);
+	fTaxa = logFile(lg, lgTX);
 	if (!fTaxa) {
 		fprintf(stderr, "Cannot open taxon-file\n");
 		exit(-1);

@@ -67,5 +67,3 @@ extern void		ntRestoreLinks(Net *nt, Link *work, Link *end);
 extern Cursor *	ntPostorderNodes(Net *nt, Cursor **work);
 extern int		ntCyclic(Net *nt);
 
-extern Length	ntEnumerate(Net *nt, Length bound);
-

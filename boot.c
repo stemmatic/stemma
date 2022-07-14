@@ -35,7 +35,8 @@ typedef struct {
 
 typedef struct {
 	FILE *log;			// File to print to
-	Flag *curset;		// Current set
+	Flag *curset;		// Current (sub)set
+	Flag *tset;			// Current terminal set
 	long thresh;		// Threshold
 	long reps;			// Replicates
 	Cursor len;			// Length of set
@@ -224,13 +225,23 @@ void
 }
 
 static void
-	bootPrintTset(FILE *log, Taxa *tx, Flag *tset)
+	bootPrintTset(FILE *log, Net *nt, Flag *curset, Flag *tset)
 {
+	Taxa *tx = nt->taxa;
 	Cursor tt;
 
 	for (tt = 0; tt < tx->nExtant; tt++) {
-		if (tset[tt])
-			fprintf(log, " "NAM_F"", txName(tx,tt));
+		char buffer[TAXNAME];
+		int len;
+
+		len = sprintf(buffer, " %s"NAM_F"", (nt->nParents[tt] > 1) ? "%" : "", txName(tx,tt));
+		if (!tset[tt])
+			continue;
+		if (curset[tt])
+			fprintf(log, "%s", buffer);
+		else {
+			fprintf(log, "%*c", len, ' ');
+		}
 	}
 }
 
@@ -239,7 +250,6 @@ static void
 {
 	BtPrintSub *bp = ctx;
 	Net *nt = bp->nt;
-	Taxa *tx = nt->taxa;
 	Cursor node = bp->node, dn;
 
 	if (count < bp->thresh)
@@ -258,7 +268,7 @@ static void
 
 	fprintf(bp->log, "    subset: % 6ld %4.2f",
 		count, (double) count / bp->reps);
-	bootPrintTset(bp->log, tx, bp->curset);
+	bootPrintTset(bp->log, nt, bp->curset, bp->tset);
 	fprintf(bp->log, "\n");
 }
 
@@ -297,7 +307,7 @@ void
 		// Print Terminal Sets:
 		if (bn->dupTset) {
 			fprintf(log, "      tset:");
-			bootPrintTset(log, tx, bn->tset);
+			bootPrintTset(log, nt, bn->tset, bn->tset);
 			fprintf(log, "\n");
 			fprintf(log, "Duplicate terminal set.\n");
 		} else {
@@ -305,11 +315,12 @@ void
 
 			fprintf(log, "     count: % 6ld %4.2f",
 				count, (double) count / bt->reps);
-			bootPrintTset(log, tx, bn->tset);
+			bootPrintTset(log, nt, bn->tset, bn->tset);
 			fprintf(log, "\n");
 
 			// Print subsets
 			bp.node = bn->node;
+			bp.tset = bn->tset;
 			ptWalk(bt->pt, bn->tset, bp.curset, tx->nExtant, &bp, bootPrintSub);
 		}
 

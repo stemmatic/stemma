@@ -57,7 +57,7 @@ int
 	MaxMP2 = taxa->nVunits / 20 + 1;
 
 	// Read constraints
-	if ((fcon = logFile(lg, lgTIME)) && ntConstraints(nt, fcon) != YES)
+	if ((fcon = logFile(lg, lgNO)) && ntConstraints(nt, fcon) != YES)
 		return -1;
 	fclose(fcon);
 
@@ -83,8 +83,20 @@ int
 		cacheRestore(nt, best);
 		cacheSave(nt, cacheCost(best), curr);
 #if 1
-		// Set RetCost to average cost per node.
-		RetCost = ceil ((double) cacheCost(best)/cacheNodes(best));
+		// Set RetCost to average cost per node plus std dev.
+		block {
+			double mean = (double) cacheCost(best)/cacheNodes(best);
+			double dev, sumdev = 0.0;
+			Cursor t;
+			for (t = 0; t < nt->maxTax; t++) {
+				if (!nt->inuse[t])
+					continue;
+				dev = nt->cumes[t] - mean;
+				sumdev += dev * dev;
+			}
+			
+			RetCost = ceil(mean + sqrt(sumdev/cacheNodes(best))/2.0);
+		}
 #else
 		// Set RetCost to average singulars per node.
 		{
@@ -175,7 +187,7 @@ static Taxa *
 	FILE *fTaxa;
 	Taxa *tx;
 
-	fTaxa = logFile(lg, lgTAXA);
+	fTaxa = logFile(lg, lgTX);
 	if (!fTaxa) {
 		fprintf(stderr, "Cannot open taxon-file\n");
 		exit(-1);

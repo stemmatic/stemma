@@ -1,3 +1,34 @@
+2020/06/07 - Character (vu) weigths!
+
+I've decided that weighting the vu's is a
+good idea since not all variants are equal
+and weighting by the edit distance (/ 6) seems
+to generate more intuitive stemmata. But
+there's no direct support for weighting in
+stemma, so prep is hacked to duplicate the
+weighted vunits.
+
+A better approach to is have stemma detect
+duplicate vunits and calculate weights. Much
+will have to change under the hood, because
+a lot of code assumes a weight of one. One
+benefit is that I can sort by weight and so
+might be able to detect worse configurations
+sooner.
+
+2020/06/07 - Reroot the stemma
+
+It is not always guaranteed, especially when
+the root is more than a trichotomy (e.g., four
+branches) that it will splay the root to the
+top. Perhaps I can simply reroot the stemma,
+to bring the node with the least absolute cost
+to the top.
+
+First I can make it a command line option to
+stemma, then perhaps integrate it into hypCRR
+or the like.
+
 2018/18/8 - Config file?
 
 Am I at the point where instead of environment
@@ -364,7 +395,7 @@ having the attested mss become various kinds of mixtures of
 these.
 
 My conclusion was that such a state of affairs was a violation
-of Weitzman's bipolarity assuming, because such cobbled together
+of Weitzman's bipolarity assumption, because such cobbled together
 hypothetical ancestors were not sufficiently evidenced across
 the entire text to be an actual pole.  Rather, it was an artificial
 conglomeration of variant readings.  Therefore, I began to classify
