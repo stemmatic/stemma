@@ -29,6 +29,7 @@ struct NetStats {
 	struct {
 		Cursor fr, to;
 		double pct;
+		int biggest;
 	} *retLinks;
 	int nEnd;
 	Cursor vu;
@@ -389,12 +390,23 @@ static void
 	}
 	fprintf(log, "Mixed %%ages:");
 	for (nn = 0; nn < mps; nn++) {
-		fprintf(log, " %s=%.0f%%", txName(tx,mpars[nn]),
-			100.0*mrdgs[nn]/nMixRdgs);
+		double linkPct = 100.0*mrdgs[nn]/nMixRdgs;
+		fprintf(log, " %s=%.0f%%", txName(tx,mpars[nn]), linkPct);
 		if (ns) {
+			Cursor rr;
+			int amBiggest = YES;
+			for (rr = 0; rr < ns->nEnd; rr++) {
+				if (ns->retLinks[rr].to != t)
+					continue;
+				if (ns->retLinks[rr].pct < linkPct)
+					ns->retLinks[rr].biggest = NO;
+				else
+					amBiggest = NO;
+			}
 			ns->retLinks[ns->nEnd].fr = mpars[nn];
 			ns->retLinks[ns->nEnd].to = t;
-			ns->retLinks[ns->nEnd].pct = 100.0*mrdgs[nn]/nMixRdgs;
+			ns->retLinks[ns->nEnd].pct = linkPct;
+			ns->retLinks[ns->nEnd].biggest = amBiggest;
 			ns->nEnd++;
 		}
 	}
@@ -711,6 +723,17 @@ static double
 	return 100.0;
 }
 
+static int
+	nsBiggest(NetStats *ns, Cursor fr, Cursor to)
+{
+	Cursor t;
+	for (t = 0; t < ns->nEnd; t++) {
+		if (ns->retLinks[t].fr == fr && ns->retLinks[t].to == to)
+			return ns->retLinks[t].biggest;
+	}
+	return YES;
+}
+
 static void
 	nsPrintState(FILE *fp, NetStats *ns, Taxa *tx, Cursor node)
 {
@@ -720,7 +743,7 @@ static void
 }
 
 static void
-	logInorder(Net *nt, FILE *fp, Cursor node, NetStats *ns, double pct)
+	logInorder(Net *nt, FILE *fp, Cursor node, NetStats *ns, double pct, int big)
 {
 	Taxa *tx = nt->taxa;
 	Cursor dn;
@@ -731,13 +754,12 @@ static void
 	} else
 		prefix[0] = EOS;
 	
-	if ((pct == 50.0) ? txVisit(tx,node) : (pct < 50.0)) {
+	if (big == NO) {
 		fprintf(fp, "'%s"NAM_F"'", prefix, txName(tx,node));
 		nsPrintState(fp, ns, tx, node);
 		fprintf(fp, ":%lu", (unsigned long) nt->cumes[node]);
 		return;
 	}
-	txVisit(tx,node) = YES;
 
 	if (nt->nChildren[node] == 0) {
 		fprintf(fp, "'%s"NAM_F"'", prefix, txName(tx,node));
@@ -750,7 +772,8 @@ static void
 		for (dn = nt->Dns[node]; dn != -1; dn = nt->br[dn].nxtDn) {
 			Cursor kid = nt->br[dn].to;
 			pct = (nt->nParents[kid] > 1) ? nsParentage(ns, node, kid) : 100.0;
-			logInorder(nt, fp, kid, ns, pct);
+			big = (nt->nParents[kid] > 1) ? nsBiggest(ns, node, kid) : YES;
+			logInorder(nt, fp, kid, ns, pct, big);
 			if (nt->br[dn].nxtDn != -1)
 				fprintf(fp, ", ");
 		}
@@ -764,13 +787,12 @@ static void
 static void
 	logTree(FILE *log, Net *nt, NetStats *ns)
 {
-	Taxa *tx = nt->taxa;
 	Cursor tt;
 	
-	txUnvisit(tx);
+	// Print a tree for every root (parentless) node.
 	for (tt = 0; tt < nt->maxTax; tt++) {
 		if (nt->nParents[tt] == 0 && nt->inuse[tt]) {
-			logInorder(nt, log, tt, ns, 100.0);
+			logInorder(nt, log, tt, ns, 100.0, YES);
 			fprintf(log, ";\n");
 		}
 	}
@@ -791,9 +813,9 @@ static void
 		return;
 	}
 
-	fprintf(log, "Root: "NAM_F" %s |   %3ld %4ld\n",
+	fprintf(log, "Root: "NAM_F" %*s %3ld %4ld\n",
 		txName(tx,work->from),
-		"                    " + strlen(txName(tx,work->from)),
+		24 - (int) strlen(txName(tx,work->from)), "|  ",
 		nt->cumes[work->from],
 		txApographic(tx,work->from,nt->outgroup));
 
@@ -803,8 +825,7 @@ static void
 		Cursor fr = link->from;
 		fprintf(log, "Link: "NAM_F" "LNK_F" "NAM_F" ",
 			txName(tx,fr), C_NLINK(nt,to), txName(tx,to));
-		fprintf(log, "%s |  ", "                "
-				+ strlen(txName(tx,fr)) + strlen(txName(tx,to)));
+		fprintf(log, "%*s", 20 - (int) strlen(txName(tx,fr)) - (int) strlen(txName(tx,to)), "|  ");
 		fprintf(log, " %3ld", nt->cumes[to]);
 		fprintf(log, " %4ld", txApographic(tx,to,nt->outgroup)); 
 		fprintf(log, " %4ld", txApographic(tx,to,nt->outgroup)
@@ -843,7 +864,7 @@ void
 	for (t1 = 0; t1 < nt->maxTax; t1++) {
 		if (!nt->inuse[t1])
 			continue;
-		fprintf(log, "Node %5s:\n", txName(tx,t1));
+		fprintf(log, "All 999 Node %5s:{\n", txName(tx,t1));
 		for (t2 = 0; t2 < tx->nExtant; t2++) {
 			if (!nt->inuse[t2])
 				continue;
@@ -861,9 +882,9 @@ void
 			agr = 0.0;
 			if (base > 0)
 				agr = 100.0*((double) base - diff)/(double) base;
-			fprintf(log, "%.1f\n", agr);
+			fprintf(log, "%.2f\n", agr);
 		}
-		fprintf(log, "\n");
+		fprintf(log, "}\n");
 	}
 	
 	fprintf(log, "\nNumber of Singular Readings:\n");
@@ -880,7 +901,7 @@ void
 	for (t1 = 0; t1 < nt->maxTax; t1++) {
 		if (!nt->inuse[t1])
 			continue;
-		fprintf(log, "Node %5s:\n", txName(tx,t1));
+		fprintf(log, "Informative 999 Node %5s:{\n", txName(tx,t1));
 		for (t2 = 0; t2 < tx->nExtant; t2++) {
 			if (!nt->inuse[t2])
 				continue;
@@ -901,16 +922,20 @@ void
 			agr = 0.0;
 			if (base > 0)
 				agr = 100.0*((double) base - diff)/(double) base;
-			fprintf(log, "%.1f\n", agr);
+			fprintf(log, "%.2f\n", agr);
 		}
-		fprintf(log, "\n");
+		fprintf(log, "}\n");
 	}
+
+	char *stats = getenv("STATS");
+	if (!stats || strcmp(stats, "CBGM") != 0)
+		return;
 
 	fprintf(log, "\nPotential Ancestors/Descendents (CBGM):\n");
 	for (t1 = 0; t1 < tx->nExtant; t1++) {
 		if (!nt->inuse[t1])
 			continue;
-		fprintf(log, "Node %5s:\n", txName(tx,t1));
+		fprintf(log, "Potential Anc/Desc Node %5s:\n", txName(tx,t1));
 		for (t2 = 0; t2 < nt->maxTax; t2++) {
 			int w1 = 0, w2 = 0;
 			if (!nt->inuse[t2])
@@ -942,7 +967,7 @@ void
 	for (t1 = 0; t1 < tx->nExtant; t1++) {
 		if (!nt->inuse[t1])
 			continue;
-		fprintf(log, "Node %5s:\n", txName(tx,t1));
+		fprintf(log, "Potential Sibling Node %5s:\n", txName(tx,t1));
 		for (t2 = 0; t2 < nt->maxTax; t2++) {
 			int w1 = 0;
 			if (!nt->inuse[t2])
@@ -989,6 +1014,8 @@ static void
 	Flag rdgs[256];
 	int rdg, nStates;
 	int m=0, s=0, g=0;	// For calculation of ci, ri.
+	int nodeRdg = MISSING;
+	int inGroup=0, outGroup=0;		// For calculation of apography index
 
 	fprintf(log, "Var %d: ", vv);
 
@@ -1018,8 +1045,11 @@ static void
 		if (t < tx->nExtant && tv != MISSING && tv != tx->majority[vv])
 			g++;
 	}
+	fprintf(log, "\n");
 
 	/* Print which nodes have which reading */
+	if (node >= tx->nExtant)
+		nodeRdg = txRdgs(tx,node)[vv];
 	nStates = (tx->type[vv] == Informative) ? MAXSTATES : MISSING+1;
 	for (rdg = 0; rdg < nStates; rdg++) {
 		/* Skip unattested readings */
@@ -1029,7 +1059,7 @@ static void
 		if (rdg != MISSING)
 			m++;
 
-		fprintf(log, "\n    %c :=", STATES[rdg]);
+		fprintf(log, "    %c :=", STATES[rdg]);
 		if (node == -1) {
 			/* Print regex of witnesses (for easy coloring of phylotree.hyphy.org trees) */
 			for (t = 0; t < nt->maxTax; t++) {
@@ -1040,7 +1070,6 @@ static void
 				if (txRdgs(tx,t)[vv] == rdg)
 					logRegEx(log, nt, tx, t);
 			}
-			fprintf(log, "\n        ");
 		} else {
 			/* Print two lines: first for descendents, then for non-descendents */
 			for (t = 0; t < nt->maxTax; t++) {
@@ -1050,8 +1079,11 @@ static void
 					continue;
 				if (!nt->descendents[node][t])
 					continue;
-				if (txRdgs(tx,t)[vv] == rdg)
+				if (txRdgs(tx,t)[vv] == rdg) {
 					logSupporter(log, nt, tx, t);
+					if (t < tx->nExtant && rdg == nodeRdg)
+						inGroup++;
+				}
 			}
 			fprintf(log, "\n        ");
 			for (t = 0; t < nt->maxTax; t++) {
@@ -1061,20 +1093,28 @@ static void
 					continue;
 				if (nt->descendents[node][t])
 					continue;
-				if (txRdgs(tx,t)[vv] == rdg)
+				if (txRdgs(tx,t)[vv] == rdg) {
 					logSupporter(log, nt, tx, t);
+					if (t < tx->nExtant && rdg == nodeRdg)
+						outGroup++;
+				}
 			}
 		}
+		fprintf(log, "\n");
 	}
 
 	/* Print some summary statistics, consistency index and retentiion index. */
 	if (tx->type[vv] == Informative) {
-		fprintf(log, "\n");
 		--m;
 		fprintf(log, "ci=%.2f, ri=%.2f", (double) m/(double) s, 
 			((double) g - (double) s) / ((double) g - (double) m));
+		if (nodeRdg != MISSING) {
+			double a = inGroup;
+			double b = outGroup + inGroup;
+			fprintf(log, ", ai=%.3f, si=%.3f", (a/b), (a/b) * ((a-1)/(b-1)));
+		}
+		fprintf(log, "\n");
 	}
-	fprintf(log, "\n");
 	fprintf(log, "\n");
 }
 
@@ -1121,7 +1161,6 @@ void
 	while (fgets(buffer, sizeof buffer, fpin)) {
 		Cursor vv, rdg;
 		char *end;
-		int nStates;
 		
 		if (buffer[0] == '-')
 			continue;
@@ -1134,8 +1173,8 @@ void
 		fprintf(fpout, "^");
 		fputs(buffer, fpout);
 
-		nStates = (tx->type[vv] == Informative) ? MAXSTATES : MISSING+1;
-		for (rdg = 0; rdg < nStates; rdg++) {
+		rdg = MAXSTATES;
+		while (--rdg >= 0) {
 			Cursor t;
 			int nMSS = 0;
 
@@ -1229,6 +1268,7 @@ void
 		for (t = 0; t < nt->nLinks; t++) {
 			ns->retLinks[t].fr = ns->retLinks[t].to = TXNOT;
 			ns->retLinks[t].pct = 0.0;
+			ns->retLinks[t].biggest = NO;
 		}
 		ns->nEnd = 0;
 		ns->vu = (vu) ? atoi(vu) : ERR;  // Which optional vu to annotate on the tree
