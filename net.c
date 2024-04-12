@@ -843,9 +843,10 @@ static struct vdiff *
 		SET_VDIFF(vc, vd, vv+1, vTo);
 		SET_VDIFF(vc, vd, vv+2, vTo);
 		SET_VDIFF(vc, vd, vv+3, vTo);
-// I want #if ALIGN == 7, but ALIGN contains sizeof and cannot be used here. So, I have a "static assert"
-#if 1
-switch (0) case 0: case (ALIGN - 3): ;	// Make sure the word size is not 4.
+#if defined (_LP64)
+		// I want #if ALIGN == 7, but ALIGN contains sizeof and cannot be used here.
+		// So, I'll check the architecture and sanity check with a "static assert" to make sure.
+switch (0) case 0: case (ALIGN - 3): ;	// Make sure the word size is not actually 4.
 		SET_VDIFF(vc, vd, vv+4, vTo);
 		SET_VDIFF(vc, vd, vv+5, vTo);
 		SET_VDIFF(vc, vd, vv+6, vTo);
