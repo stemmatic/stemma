@@ -18,7 +18,7 @@ jobs:
                ubuntu-clang-15,
                macos-xcode-14-intel,
                macos-xcode-14-arm,
-#               windows
+               windows
                ]
 
         include:
@@ -58,11 +58,11 @@ jobs:
             version: "14"
             arch: "mac-arm64"
 
-#          - name: windows
-#            os: ubuntu-22.04
-#            compiler: mingw
-#            version: "N/A"
-#            arch: "win64"
+          - name: windows
+            os: ubuntu-22.04
+            compiler: mingw
+            version: "N/A"
+            arch: "win64"
 
     runs-on: ${{ matrix.os }}
     steps:
