@@ -200,15 +200,17 @@ int
 
 	if (rootCost == -1)
 		rootCost = txApographic(tx,ntRoot(nt),nt->outgroup);
-	if (rootCost > cache->rootCost)
-		return NO;
 	if (rootCost < cache->rootCost)
 		return YES;
-
-	if (nLinks >= cache->nLinks)
+	if (rootCost > cache->rootCost)
 		return NO;
 
-	return YES;
+#if 1
+	if (nLinks < cache->nLinks)
+		return YES;
+#endif
+
+	return NO;
 }
 
 int	

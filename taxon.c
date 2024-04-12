@@ -266,7 +266,7 @@ void
 
 	// Set up permutation vector
 	for (vv = 0; vv < tx->nVunits; vv++) {
-		Cursor vb = (int) ((double) tx->nVunits * rand() / (RAND_MAX + 1.0));
+		Cursor vb = (int) ((double) tx->nVunits * random() / (RAND_MAX + 1.0));
 		tx->permute[vv] = vb;
 	}
 	tx->perturbed = YES;

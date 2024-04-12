@@ -36,6 +36,7 @@ Net *
 
 	nt->taxa = tx;
 	nt->nLinks = 0;
+	nt->nMixed = 0;
 
 	// Some dynamic values related to hypothetical nodes;
 	nt->nTaxa = tx->nExtant;
@@ -89,6 +90,9 @@ Net *
 		nt->vcs[from] = nt->vcBase[from];
 	}
 
+#if DO_MAXMIX
+	nt->maxMix = alignTotal;
+#endif
 	return nt;
 }
 
@@ -109,6 +113,8 @@ void
 	nt->nLinks++;
 	nt->nChildren[from]++;
 	nt->nParents[to]++;
+	if (nt->nParents[to] == 2)
+		nt->nMixed++;
 
 	bb = nt->freeBr;
 	assert( bb != -1 );
@@ -154,6 +160,7 @@ void
 	ASET(nt->nChildren, 0, tx->nTotal);
 	ASET(nt->nParents, 0, tx->nTotal);
 	nt->nLinks = 0;
+	nt->nMixed = 0;
 
 	for (from = 0; from < 2*tx->nExtant-1; from++)
 		nt->br[from].nxtBr = from+1;
@@ -177,6 +184,8 @@ void
 	--nt->nLinks;
 	--nt->nChildren[from];
 	--nt->nParents[to];
+	if (nt->nParents[to] == 1)
+		--nt->nMixed;
 
 	br = 0;
 	for (up = &nt->Ups[to]; *up != -1; up = &br->nxtUp) {
@@ -402,6 +411,8 @@ int
 		}
 		if (nt->nParents[anc] == 0)
 			unmixed--;
+		if (nt->nParents[anc] > 1)
+			mixed++;
 		if (mixed > unmixed)
 			return YES;
 	}

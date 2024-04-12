@@ -37,6 +37,11 @@ typedef struct Net {
 	Flag **descendents;	// [T][T] Each Taxon's descendents
 
 	Cursor outgroup;	// Outgroup taxon or -1 for '0'
+
+#if DO_MAXMIX
+	Cursor maxMix;		// Maximum number of mixed nodes
+	Cursor nMixed;		// Number of mixed nodes
+#endif
 } Net;
 
 typedef struct Link {

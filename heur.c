@@ -67,7 +67,7 @@ Length
 	cacheMsg(nt, best, C_VPASS,
 		"Ratchet: %6d of %6d / %2d ",
 		0, nCycles, 1 - nRatchets);
-	cacheMsg(nt, best, C_VPASS, "RET=%3d       ", RetCost);
+	cacheMsg(nt, best, C_VPASS, "RET=%3d        ", RetCost);
 	cacheMsg(nt, best, C_VPASS, "best: %C-%R ",
 		cacheCost(best), cacheRootCost(best));
 	cacheMsg(nt, best, C_VPASS, "u%.3f ",
@@ -147,7 +147,7 @@ Length
 	cacheMsg(nt, best, C_VRUN, "u%.3f ",
 		(double) cacheCost(best)/cacheNodes(best));
 	cacheMsg(nt, best, C_VRUN, "x%3d", cacheMixedNodes(best));
-	cacheMsg(nt, best, C_VRUN, "\n");
+	cacheMsg(nt, best, C_VRUN, "   \n");
 
 	cacheFree(nt, curr);
 	cacheFree(nt, ratchet);
@@ -277,7 +277,7 @@ Length
 					Boltz_prob = exp(-(double)delta/temperature);
 				else
 					Boltz_prob = exp(-0.1/temperature);
-				rnd = (double)rand()/RAND_MAX;
+				rnd = (double)random()/RAND_MAX;
 				cacheMsg(nt, best, C_VPASS, "d%3ld, p%.3f >%.3f",
 					delta, Boltz_prob, rnd);
 				if (rnd >= Boltz_prob)

@@ -76,7 +76,11 @@ static int
 	Cursor first, second;			// First and second kids
 	Cursor dn;
 
-	// Must have two kids
+	// With one kid, it duplicates if hypothetical
+	if (nt->nChildren[node] == 1)
+		return (node > tx->nExtant);
+
+	// For now, only check parents of two kids
 	if (nt->nChildren[node] != 2)
 		return NO;
 	

@@ -359,7 +359,7 @@ static void
 			continue;
 		nn = 0;
 		nMiss = 0;
-		fprintf(log, "\t%s:", txName(tx,p1));
+		fprintf(log, "\t"CST_F" %s:", txApographic(tx,p1,nt->outgroup), txName(tx,p1));
 		for (vv = 0; vv < tx->nVunits; vv++) {
 			if (txRdgs(tx,p1)[vv] == MISSING && txRdgs(tx,t)[vv] != MISSING)
 				nMiss++;
@@ -433,6 +433,18 @@ static void
 	fprintf(log, "nV(%d) - nOverlaps(%d) - nMixRdgs(%d) = %d ; nMiss: %d\n",
 		tx->nVunits, nOverlaps, (int) nMixRdgs, tx->nVunits - nOverlaps - (int) nMixRdgs, nMiss);
 
+	// Calculate Pole Stretch
+	block {
+		Length hi = 0L, lo = ~0L;
+		for (nn = 0; nn < mps; nn++) {
+			Length pp = txApographic(tx,mpars[nn],nt->outgroup);
+			if (pp > hi) hi = pp;
+			if (pp < lo) lo = pp;
+		}
+		fprintf(log, "Pole Stretch: hi:"CST_F" - lo:"CST_F" = "CST_F"\n",
+			hi, lo, hi - lo);
+	}
+ 
 	block {
 		int nCAs;
 		int mrca = logMRCA(nt, t, &nCAs);

@@ -3,7 +3,8 @@
 */
 
 // Compile-time switches for various reticulation-related issues
-#define DO_MP2 1
+#define DO_MAXMIX 1
+#define DO_MP2 0
 #define ROOTFIX 0
 
 // CLINK - Constant link (as between an original and a corrector)

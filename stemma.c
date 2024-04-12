@@ -37,9 +37,9 @@ int
 	Log *lg;
 	FILE *fcon;
 	int started, nX;
-	char *verbose, *mode;
+	char *verbose, *mode, *maxmix = 0;
 
-	{
+	block {
 		char *seed = getenv("SEED");
 		if (!seed) {
 			Seed = time((time_t *) 0);
@@ -55,6 +55,11 @@ int
 	taxa = readTaxa(lg);
 	nt = ntNew(taxa);
 	MaxMP2 = taxa->nVunits / 20 + 1;
+
+#if DO_MAXMIX
+	if ((maxmix = getenv("MAXMIX")))
+		nt->maxMix = atoi(maxmix);
+#endif
 
 	// Read constraints
 	if ((fcon = logFile(lg, lgNO)) && ntConstraints(nt, fcon) != YES)
@@ -74,42 +79,49 @@ int
 	cacheUnlock(best);
 	cacheClose(best);
 
-	if (started < 0) {
-		printf("Determining reticulation cost...\n");
-
-		RetCost = nt->taxa->nVunits;
-		initStemma(nt, curr, best);
-
+	if (started >= 0) {
 		cacheRestore(nt, best);
 		cacheSave(nt, cacheCost(best), curr);
-#if 1
-		// Set RetCost to average cost per node plus std dev.
-		block {
-			double mean = (double) cacheCost(best)/cacheNodes(best);
-			double dev, sumdev = 0.0;
-			Cursor t;
-			for (t = 0; t < nt->maxTax; t++) {
-				if (!nt->inuse[t])
-					continue;
-				dev = nt->cumes[t] - mean;
-				sumdev += dev * dev;
-			}
-			
-			RetCost = ceil(mean + sqrt(sumdev/cacheNodes(best))/2.0);
-		}
-#else
-		// Set RetCost to average singulars per node.
-		{
-			Cursor t, nSings = 0;
-			for (t = 0; t < nt->maxTax; t++) {
-				if (!nt->inuse[t])
-					continue;
-				nSings += txNSings(nt->taxa,t);
-			}
-			RetCost = nSings / nt->nTaxa;
-		}
+#if DO_MAXMIX
+		if (RetCost == 0 && !maxmix)
+			nt->maxMix = cacheMixedNodes(best);
 #endif
-		printf("Reticulation cost is: %d\n", (int) RetCost);
+	} else {
+		if (maxmix) {
+			RetCost = 0;
+			initStemma(nt, curr, best);
+
+			cacheRestore(nt, best);
+			cacheSave(nt, cacheCost(best), curr);
+		} else {
+			printf("Determining reticulation cost...\n");
+
+			RetCost = nt->taxa->nVunits;
+			initStemma(nt, curr, best);
+
+			cacheRestore(nt, best);
+			cacheSave(nt, cacheCost(best), curr);
+
+			// Set RetCost to average cost per node plus std dev.
+			block {
+				double mean = (double) cacheCost(best)/cacheNodes(best);
+#if 0
+				double dev, sumdev = 0.0;
+				Cursor t;
+				for (t = 0; t < nt->maxTax; t++) {
+					if (!nt->inuse[t])
+						continue;
+					dev = nt->cumes[t] - mean;
+					sumdev += dev * dev;
+				}
+				
+				RetCost = ceil(mean + sqrt(sumdev/cacheNodes(best))/2.0);
+#else
+				RetCost = ceil(mean);
+#endif
+			}
+			printf("Reticulation cost is: %d\n", (int) RetCost);
+		}
 		srandom(Seed);
 
 		(void) ntCost(nt);
@@ -118,9 +130,6 @@ int
 		cacheWrite(nt, best);
 		cacheUnlock(best);
 		cacheClose(best);
-	} else {
-		cacheRestore(nt, best);
-		cacheSave(nt, cacheCost(best), curr);
 	}
 { char *ret; if ((ret = getenv("RET"))) RetCost = atoi(ret); }
 

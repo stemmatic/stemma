@@ -6,7 +6,7 @@
 
 #define NAM_F "%s"
 #define CST_F "%4lu"
-#define RTC_F "%02lu"
+#define RTC_F "%03lu"
 #define LNK_F "%c>"
 #define C_NLINK(nt,node) ((nt)->nParents[node] > 1 ? '=' : '-')
 

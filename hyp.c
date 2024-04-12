@@ -174,6 +174,8 @@ int
 	}
 	if (nt->nParents[tt] == 0)
 		--nUnmixed;
+	if (nt->nParents[tt] > 1)
+		nMixed++;
 
 	link->from = tt;
 	link->to = hyp;
@@ -284,22 +286,9 @@ int
 	link->from = nt->taxa->nTotal;
 	link->to   = nt->taxa->nTotal;
 
-#if 0
-	{
-		char *envMaxMix;
-		if ((envMaxMix = getenv("MAXMIX"))) {
-			int maxMix = atoi(envMaxMix);
-			int nMixed = 0;
-			Cursor tt;
-
-			for (tt = 0; tt < nt->maxTax; tt++) {
-				if (nt->inuse[tt] && nt->nParents[tt] > 1)
-					nMixed++;
-			}
-			if (nMixed >= maxMix)
-				return cached;
-		}
-	}
+#if DO_MAXMIX
+		if (nt->nMixed >= nt->maxMix)
+			return cached;
 #endif
 
 	got = ntIncLink(nt, basecost, bestCost, dst, link);
@@ -1026,6 +1015,7 @@ static Length
 	Branch *br, *brEnd = &nt->br[2*tx->nExtant];
 
 	oldBase = cacheCost(start);
+
 
 	for (br = nt->br; br < brEnd; br++) {
 		Cursor t1, t2;
