@@ -21,7 +21,6 @@
 static Taxa *	readTaxa(Log *lg);
 
 Length RetCost = 0;
-Length MaxMP2 = 0;
 
 int
 	main(int argc, char *argv[])
@@ -39,7 +38,6 @@ int
 
 	taxa = readTaxa(lg);
 	nt = ntNew(taxa);
-	MaxMP2 = taxa->nVunits / 20 + 1;
 
 	// Read constraints
 	if ((fcon = logFile(lg, lgNO)) && ntConstraints(nt, fcon) != YES)
@@ -75,7 +73,7 @@ int
 	if ((ms = getenv("MS")))
 		logUncollate(lg, nt, ms);
 	else if (!getenv("NOREPORT"))
-		logResults(lg, nt);
+		logResults(lg, nt, cname);
 
 	logAnalysis(stdout, nt);
 

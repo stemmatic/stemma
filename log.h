@@ -18,7 +18,7 @@ extern void logStats(FILE *fp, Net *nt);
 
 extern Log *logInit(int argc, char *argv[], int maxArg, char *usage);
 extern FILE *logFile(Log *lg, enum Logs logExt);
-extern void logResults(Log *lg, Net *nt);
+extern void logResults(Log *lg, Net *nt, char *outbase);
 extern void logUncollate(Log *lg, Net *nt, char *ms);
 extern void logBoot(Net *nt, Boot *bt, Log *lg);
 

@@ -57,6 +57,8 @@ int
 	link->to = tt;
 	ntConnect(nt, link);
 
+	// Do reconnections. 
+	// O:: Is use of nt->Ups[] and nt->Dns[] faster?
 	for (t = 0; t < nt->maxTax; t++) {
 		if (t == hyp)
 			continue;
@@ -78,19 +80,31 @@ int
 	}
 
 	got = basecost;
-	if (ntHypConstrained(nt))
+	if (ntHypConstrained(nt)) {
 		got = -1;
-	else {
-		if (nt->nParents[tt] == 0)
-			got += nt->cumes[tt];
-		got = stAncCost(nt, hyp, nt->cumes, got, cacheCost(best));
-		if (cacheBetter(nt, got, rootCost, nt->nLinks, best)) {
-			stFixNode(nt, hyp);
-			cached = cacheSave(nt, got, best);
-			cacheMsg(nt, best, C_VCACHE, "(%N)=%N %C-%R ", tt, hyp, got, cacheRootCost(best));
-		}
+		goto break_out;
 	}
 
+	if (nt->nParents[tt] == 0)
+		got += nt->cumes[tt];
+	got = stAncCost(nt, hyp, nt->cumes, got, cacheCost(best));
+	if (!cacheBetter(nt, got, rootCost, nt->nLinks, best))
+		goto break_out;
+
+	stFixNode(nt, hyp);
+
+#if DO_POLE
+	// Pole check all of hyp's kids now
+	if (!ntKidsPoleCheck(nt, hyp) || !ntPoleCheck(nt,hyp))
+		goto break_out;
+#endif
+
+	cached = cacheSave(nt, got, best);
+	cacheMsg(nt, best, C_VCACHE, "(%N)=%N %C-%R ", tt, hyp, got, cacheRootCost(best));
+
+break_out:
+	// Undo connections.
+	// O:: Is use of nt->Ups[] and nt->Dns[] faster?
 	for (t = 0; t < nt->maxTax; t++) {
 		if (t == tt)
 			continue;
@@ -236,6 +250,9 @@ int
 					cacheMsg(nt, best, C_VCACHE, "RC-%d ", rootCost-newRootCost);
 					stFixNode(nt, root);
 				}
+#if DO_POLE
+				if (ntKidsPoleCheck(nt, hyp))
+#endif
 				justCached = cached = cacheSave(nt, got, best);
 				if (justCached) {
 					cacheMsg(nt, best, C_VCACHE, "%N(%N,%N)=%N %C-%R ",
@@ -741,7 +758,6 @@ static Length
 	Link *work, *link, *end;
 	Cursor t;
 	Length oldBase, newBase;
-	int maxMiss = 0;
 
 	oldBase = cacheCost(start);
 
@@ -762,27 +778,14 @@ static Length
 		if (hypTransferDown(nt, tt, t1, work, end))
 			goto break_out;
 
-		hypClear(nt, tt);
-#if DO_MP2
-		/* Check if (new) kids of t1 are also OK with t1's parents. */
-		if (nt->nParents[t1] > 1) {
-			Cursor dn;
-
-			for (dn = nt->Dns[t1]; dn != -1; dn = nt->br[dn].nxtDn) {
-				Cursor nk = nt->br[dn].to; // new kid of t1
-				int nMiss = 0, vv;
-				vunit *fb = txBase(tx,t1);
-				vunit *tb = txBase(tx,nk);
-				for (vv = 0; vv < tx->nVunits; vv++) {
-					if (fb[vv] == MISSING && tb[vv] != MISSING)
-						nMiss++;
-				}
-				if (nMiss > maxMiss)
-					maxMiss = nMiss;
-			}
-		}
+#if DO_POLE
+		// Pole check all of t1's kids now
+		if (!ntKidsPoleCheck(nt, t1))
+			goto break_out;
 #endif
-		if (maxMiss <= MaxMP2 && !ntHypConstrained(nt)) {
+
+		hypClear(nt, tt);
+		if (!ntHypConstrained(nt)) {
 			newBase = oldBase;
 			newBase -= rr->cumes[tt];
 
@@ -850,6 +853,9 @@ static Length
 			got = stAncCost(nt, t1, nt->cumes, got, -1);
 			if (cacheBetter(nt, got, (wasRoot) ? -1 : rootCost, nt->nLinks, best)) {
 				stFixNode(nt, t1);
+#if DO_POLE
+				if (ntKidsPoleCheck(nt, t1) && ntPoleCheck(nt, t1))
+#endif
 				justCached = cached = cacheSave(nt, got, best);
 				cacheNodeRestore(nt, t1, start);
 			}
@@ -911,6 +917,9 @@ static Length
 				newBase = oldBase;
 				HYP_IncCost(newBase, nt, tx, tt, rr);
 				HYP_IncCost(newBase, nt, tx, t1, rr);
+#if DO_POLE
+				if (ntPoleCheck(nt, t1) && ntKidsPoleCheck(nt, t1))
+#endif
 				justCached = cached = hypPoly(nt, newBase, -1, t1, best);
 
 				// Be verbose
@@ -985,6 +994,9 @@ static Length
 				got = stAncCost(nt, t1, nt->cumes, got, cacheCost(best));
 				if (cacheBetter(nt, got, (wasRoot) ? -1 : rootCost, nt->nLinks, best)) {
 					stFixNode(nt, t1);
+#if DO_POLE
+					if (ntKidsPoleCheck(nt, t1) && ntPoleCheck(nt, t1))
+#endif
 					justCached = cached = cacheSave(nt, got, best);
 					cacheNodeRestore(nt, t1, start);
 				}
@@ -1016,7 +1028,6 @@ static Length
 
 	oldBase = cacheCost(start);
 
-
 	for (br = nt->br; br < brEnd; br++) {
 		Cursor t1, t2;
 		Link link[1];
@@ -1043,6 +1054,11 @@ static Length
 
 		HYP_IncCost(newBase, nt, tx, t1, rr);
 		HYP_IncCost(newBase, nt, tx, t2, rr);
+
+#if DO_POLE
+		// Pole check all of t1's kids now
+		if (ntKidsPoleCheck(nt, t1))
+#endif
 
 		if (nt->cumes[t2] > RetCost && hypLink(nt, newBase, t2, best))
 			justCached = cached = YES;
@@ -1116,6 +1132,9 @@ static Length
 			if (cacheBetter(nt, got, (wasRoot) ? -1 : rootCost, nt->nLinks, best)) {
 				stFixNode(nt, t1);
 				stFixNode(nt, t2);
+#if DO_POLE
+				if (ntKidsPoleCheck(nt, t2))
+#endif
 				justCached = cached = cacheSave(nt, got, best);
 				cacheNodeRestore(nt, t1, start);
 				cacheNodeRestore(nt, t2, start);

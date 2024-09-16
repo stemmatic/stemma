@@ -24,7 +24,6 @@ static void		initStemma(Net *nt, Cache *curr, Cache *best);
 static int		bootStemma(Net *nt, Cache *best, Log *lg, int reps);
 
 Length RetCost = 0;
-Length MaxMP2 = 0;
 
 unsigned int Seed = 0;
 
@@ -54,7 +53,6 @@ int
 
 	taxa = readTaxa(lg);
 	nt = ntNew(taxa);
-	MaxMP2 = taxa->nVunits / 20 + 1;
 
 #if DO_MAXMIX
 	if ((maxmix = getenv("MAXMIX")))

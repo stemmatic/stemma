@@ -20,6 +20,9 @@ enum verbosity {
 extern Cache *	cacheNew(Net *nt);
 extern void		cacheFree(Net *nt, Cache *cache);
 
+#if DO_POLE
+extern int		cachePoleConstrained(Net *nt);
+#endif
 extern int		cacheBetter(Net *nt, Length cost, Length rootCost,
 					int nLinks, Cache *cache);
 extern int		cacheComp(Net *nt, Cache *a, Cache *b);

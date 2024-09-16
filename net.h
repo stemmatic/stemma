@@ -21,6 +21,10 @@ typedef struct Net {
 	Length *cumes;		// [T] Cumulative costs
 	Byte **vcs;			// [T][V] Vunit costs for origination (apography)
 	Byte **vcBase;		// [T][V] Base costs, for aliasing in memoized ntCost
+#if DO_POLE
+	Length *poles;		// [T] Pole positions
+	int *banMixed;		// [T] Set to forbid a taxon from being mixed
+#endif
 
 	int nLinks;			// Number of links
 	Flag **connection;	// [T][T] Connection Array, nTotal x nTotal
@@ -54,6 +58,11 @@ extern int		ntConstraints(Net *nt, FILE *fcon);
 extern int		ntConstrained(Net *nt, Cursor from, Cursor to);
 extern int		ntHypConstrained(Net *nt);
 extern void		ntPropagate(Net *nt);
+#if DO_POLE
+extern int		ntPoleCheck(Net *nt, Cursor to);
+extern int		ntKidsPoleCheck(Net *nt, Cursor par);
+extern void		ntPolesOK(Net *nt);
+#endif
 
 extern void		ntConnect(Net *nt, Link *link);
 extern void		ntDisconnect(Net *nt, Link *link);

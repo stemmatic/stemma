@@ -302,6 +302,9 @@ void
 	} else // call general case
 		stSetRet(nt, node, folks, inLaws);
 
+#if DO_POLE
+	nt->poles[node] = txPole(tx, node);
+#endif
 	txPermuteTaxon(tx, node);
 	nt->codes[node] = TaxonCode++;
 }
@@ -717,10 +720,6 @@ static Length
 
 	static Kin *inLaws = 0;
 	Kin *inl;
-#if DO_MP2
-	vunit a1, a2;		// Actual states for kids
-	int nMiss1 = 0, nMiss2 = 0;
-#endif
 	int vv;
 
 	stInLaws(nt, hyp, &txRdgs(tx,0), &inLaws);
@@ -734,9 +733,6 @@ static Length
 		// Do first kid
 		kb = *inl;
 		s1 = kb[vv];
-#if DO_MP2
-		a1 = s1;
-#endif
 		for (inl++; (tb = *inl); inl++) {
 			if (tb[vv] == s1)
 				s1 = MISSING;
@@ -746,9 +742,6 @@ static Length
 		// Do second kid
 		kb = *inl;
 		s2 = kb[vv];
-#if DO_MP2
-		a2 = s2;
-#endif
 		for (inl++; (tb = *inl); inl++) {
 			if (tb[vv] == s2)
 				s2 = MISSING;
@@ -762,20 +755,7 @@ static Length
 			cost++;
 		if (s2 != sh && s2 != MISSING)
 			cost++;
-#if DO_MP2
-		if (sh == MISSING) {
-			if (a1 != MISSING)
-				nMiss1++;
-			if (a2 != MISSING)
-				nMiss2++;
-		}
-#endif
 	}
-#if DO_MP2
-	// Punt on MP2 constraint violation
-	if (nMiss1 > MaxMP2 || nMiss2 > MaxMP2)
-		return -1;
-#endif
 	return cost;
 }
 

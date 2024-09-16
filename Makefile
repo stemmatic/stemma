@@ -1,4 +1,4 @@
-CFLAGS=-g -Wall 
+CFLAGS=-g -Wall
 #CFLAGS+=-O2       # enable optimization
 CFLAGS+=-O3       # enable optimization
 LDLIBS=-lm

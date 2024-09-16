@@ -163,7 +163,6 @@ void
 	fprintf(log, " Total=%d; ", tx->nVunits);
 
 	fprintf(log, "R= "CST_F" ", RetCost);
-	fprintf(log, "MP2= "CST_F"\n", MaxMP2);
 	if (nt->outgroup != -1)
 		fprintf(log, "Outgroup: %s\n", txName(tx,nt->outgroup));
 
@@ -338,7 +337,7 @@ static void
 #define MMAX (5) // Cheap limit
 
 static void
-	logMixParentage(FILE *log, Net *nt, Cursor t, NetStats *ns)
+	logMixParentage(FILE *log, Net *nt, Cursor t, NetStats *ns, Length *totStretch)
 {
 	Taxa *tx = nt->taxa;
 	Cursor p1, p2, vv;
@@ -350,8 +349,8 @@ static void
 	int nOverlaps = 0;		// Overlap of the parents
 	int nMiss = 0;			// Number of missing parents states
 
-	fprintf(log, "Mixed Node %s (cost "CST_F" > RetCost"CST_F"):\n",
-		txName(tx,t), nt->cumes[t], RetCost*(nt->nParents[t]-1)); 
+	fprintf(log, "%sMixed Node %s (cost "CST_F" > RetCost"CST_F"):\n",
+		(nt->banMixed[t]) ? "!" : "", txName(tx,t), nt->cumes[t], RetCost*(nt->nParents[t]-1));
 	for (p1 = 0; p1 < nt->maxTax; p1++) {
 		if (!nt->inuse[p1])
 			continue;
@@ -359,7 +358,7 @@ static void
 			continue;
 		nn = 0;
 		nMiss = 0;
-		fprintf(log, "\t"CST_F" %s:", txApographic(tx,p1,nt->outgroup), txName(tx,p1));
+		fprintf(log, "\t"CST_F" %4s:", txPole(tx,p1), txName(tx,p1));
 		for (vv = 0; vv < tx->nVunits; vv++) {
 			if (txRdgs(tx,p1)[vv] == MISSING && txRdgs(tx,t)[vv] != MISSING)
 				nMiss++;
@@ -433,24 +432,44 @@ static void
 	fprintf(log, "nV(%d) - nOverlaps(%d) - nMixRdgs(%d) = %d ; nMiss: %d\n",
 		tx->nVunits, nOverlaps, (int) nMixRdgs, tx->nVunits - nOverlaps - (int) nMixRdgs, nMiss);
 
-	// Calculate Pole Stretch
-	block {
-		Length hi = 0L, lo = ~0L;
-		for (nn = 0; nn < mps; nn++) {
-			Length pp = txApographic(tx,mpars[nn],nt->outgroup);
-			if (pp > hi) hi = pp;
-			if (pp < lo) lo = pp;
-		}
-		fprintf(log, "Pole Stretch: hi:"CST_F" - lo:"CST_F" = "CST_F"\n",
-			hi, lo, hi - lo);
-	}
- 
 	block {
 		int nCAs;
 		int mrca = logMRCA(nt, t, &nCAs);
 		int nBPviols = logBPviols(nt, t, mrca);
-		fprintf(log, "Common ancestors: %d; MRCA: %s; bi-polarity violations: %d\n\n", nCAs, txName(tx,mrca), nBPviols);
+		fprintf(log, "Common ancestors: %d; MRCA: %s @ "CST_F"~"CST_F"; bi-polarity violations: %d\n",
+			nCAs, txName(tx,mrca), txApographic(tx,mrca,nt->outgroup), txPole(tx,mrca), nBPviols);
 	}
+
+#if 0
+	// Calculate MRCA Pole Stretch
+	block {
+		int nCAs;
+		int mrca = logMRCA(nt, t, &nCAs);
+		Length hi = 0L, lo = ~0L;
+		for (nn = 0; nn < mps; nn++) {
+			Length pp = txApographic(tx,mpars[nn],mrca);
+			if (pp > hi) hi = pp;
+			if (pp < lo) lo = pp;
+		}
+		fprintf(log, "MRCA Pole Stretch: hi:"CST_F" - lo:"CST_F" = "CST_F" @ "CST_F"\n",
+			hi, lo, hi - lo, txApographic(tx,t,mrca));
+	}
+#endif
+
+	// Calculate Pole Stretch
+	block {
+		Length hi = 0L, lo = ~0L;
+		for (nn = 0; nn < mps; nn++) {
+			Length pp = txPole(tx, mpars[nn]);
+			if (pp > hi) hi = pp;
+			if (pp < lo) lo = pp;
+		}
+		fprintf(log, "     Pole Stretch: hi:"CST_F" - lo:"CST_F" = "CST_F" @ "CST_F"\n",
+			hi, lo, hi - lo, txPole(tx, t));
+		*totStretch += hi - lo;
+	}
+ 
+	fprintf(log, "\n");
 }
 
 static Cursor
@@ -524,6 +543,7 @@ static void
 {
 	Taxa *tx = nt->taxa;
 	Cursor t, vv;
+	Length totStretch = 0;	// Total stretch distances
 
 	FILE *fpin, *fpout;
 
@@ -550,7 +570,7 @@ static void
 
 		fprintf(fpout, "Mixed ");
 		logTaxonHeader(fpout, nt, t);
-		logMixParentage(fpout, nt, t, (NetStats *) 0);
+		logMixParentage(fpout, nt, t, (NetStats *) 0, &totStretch);
 
 		ntCost(nt);		// Get the states
 
@@ -700,6 +720,7 @@ static void
 		fprintf(fpout, "\n");
 #endif
 	}
+	fprintf(fpout, "Total stretch: "CST_F"\n", totStretch);
 	fprintf(fpout, "\n");
 
 	fclose(fpout);
@@ -839,7 +860,8 @@ static void
 			txName(tx,fr), C_NLINK(nt,to), txName(tx,to));
 		fprintf(log, "%*s", 20 - (int) strlen(txName(tx,fr)) - (int) strlen(txName(tx,to)), "|  ");
 		fprintf(log, " %3ld", nt->cumes[to]);
-		fprintf(log, " %4ld", txApographic(tx,to,nt->outgroup)); 
+		fprintf(log, " "CST_F"", txApographic(tx,to,nt->outgroup)); 
+		fprintf(log, "~"CST_F"", txPole(tx,to));
 		fprintf(log, " %4ld", txApographic(tx,to,nt->outgroup)
 								- txApographic(tx,fr,nt->outgroup));
 #if 1 /* was: DO_MP2 */
@@ -1263,7 +1285,7 @@ void
 }
 
 void
-	logResults(Log *lg, Net *nt)
+	logResults(Log *lg, Net *nt, char *outbase)
 {
 	Length cost;
 	FILE *log;
@@ -1286,6 +1308,7 @@ void
 		ns->vu = (vu) ? atoi(vu) : ERR;  // Which optional vu to annotate on the tree
 	}
 
+	lg->outbase = outbase;
 	log = logFile(lg, lgSTEM);
 	if (!log) {
 		fprintf(stderr, "Cannot write results to file, using stderr...\n");
@@ -1293,22 +1316,14 @@ void
 	}
 
 	fprintf(log, "***********************\n");
-	if ((envp = getenv("RATCHETS")))
-		fprintf(log, "RACTHETS=%s ", envp);
-	if ((envp = getenv("CYCLES")))
-		fprintf(log, "CYCLES=%s ", envp);
-	if ((envp = getenv("BOOT")))
-		fprintf(log, "BOOT=%s ", envp);
-	if ((envp = getenv("TMP")))
-		fprintf(log, "TMP=%s ", envp);
-	if ((envp = getenv("OUTGRP")))
-		fprintf(log, "OUTGRP=%s ", envp);
 	if (lg->argv) {
 		int n;
 		for (n = 0; n < lg->argc; n++)
 			fprintf(log, "%s ", lg->argv[n]);
 		fprintf(log, "\n");
 	}
+	fprintf(log, "Switches: DO_MAXMIX=%d DO_POLE=%d NO_TRIPS=%d ROOTFIX=%d\n",
+		DO_MAXMIX, DO_POLE, NO_TRIPS, ROOTFIX);
 	fprintf(log, "***********************\n\n");
 
 	logAnalysis(log, nt);
@@ -1343,6 +1358,7 @@ static void
 {
 	Cursor t;
 	int nMixes = 0;
+	Length totStretch = 0;	// Total stretch distances
 
 	for (t = 0; t < nt->maxTax; t++) {
 		if (!nt->inuse[t])
@@ -1351,9 +1367,11 @@ static void
 			continue;
 
 		nMixes++;
-		logMixParentage(log, nt, t, ns);
+		logMixParentage(log, nt, t, ns, &totStretch);
 	}
-	fprintf(log, "Number of mixed nodes: %d\n\n", nMixes);
+	fprintf(log, "Number of mixed nodes: %d\n", nMixes);
+	fprintf(log, "Total stretch: "CST_F"", totStretch);
+	fprintf(log, "\n\n");
 }
 
 void

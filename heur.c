@@ -165,11 +165,13 @@ Length
 {
 	Length got;
 	Cache *curr = cacheNew(nt);
+	Cache *pool = cacheNew(nt);
 	Cache *ratchet = cacheNew(nt);
 	static char prefix[80];
 	int temperature = initTemp;
 	char *cache_file = getenv("CACHE");
 	char *tag = getenv("TAG");
+	char *pooling = getenv("POOL");
 	time_t maxT=0;
 	char *maxt;
 
@@ -177,6 +179,7 @@ Length
 		maxT = time((time_t *) NULL) + atoi(maxt);
 
 	cacheSetVerbosity(curr, cacheVerbosity(best));
+	cacheSetVerbosity(pool, cacheVerbosity(best));
 	cacheSetVerbosity(ratchet, cacheVerbosity(best));
 	if (!tag)
 		tag = "xx";
@@ -196,7 +199,7 @@ Length
 	cacheSave(nt, cacheCost(best), curr);
 
 	cacheMsg(nt, best, C_VPASS, "%2s ", tag);
-	cacheMsg(nt, best, C_VPASS, "T%5d/%5d %C-%R u%.3f",
+	cacheMsg(nt, best, C_VPASS, "T%6d/%6d %C-%R u%.3f",
 		temperature, 0, cacheCost(best), cacheRootCost(best),
 		(double) cacheCost(best)/cacheNodes(best));
 	cacheMsg(nt, best, C_VPASS, " x%3d", cacheMixedNodes(best));
@@ -248,7 +251,7 @@ Length
 
 			cacheMsg(nt, best, C_VITER, "\n");
 			cacheMsg(nt, best, C_VPASS, "%2s ", tag);
-			cacheMsg(nt, best, C_VPASS, "T%5d/%5d",
+			cacheMsg(nt, best, C_VPASS, "T%6d/%6d",
 				temperature, iter);
 			cacheMsg(nt, best, C_VPASS, " %C-%R ",
 				cacheCost(curr), cacheRootCost(curr));
@@ -303,6 +306,17 @@ Length
 		cacheRestore(nt, best);
 		cacheSave(nt, cacheCost(best), best);
 
+		if (pooling) {
+			cacheReset(pool);
+			cacheSave(nt, cacheCost(best), pool);
+			cacheOpen(pool, "SOLN");
+			cacheLock(pool);
+			if (cacheRead(nt, pool) < 0)
+				cacheWrite(nt, pool);
+			cacheUnlock(pool);
+			cacheClose(pool);
+			cacheSave(nt, cacheCost(pool), best);
+		}
 		temperature *= 0.95;
 	} while (temperature > 0);
 	//cacheMsg(nt, best, C_VPASS, "\n");
@@ -310,7 +324,7 @@ Length
 	cacheClose(best);
 
 	cacheMsg(nt, best, C_VPASS, "%2s ", tag);
-	cacheMsg(nt, best, C_VPASS, "T%5d/%5d %C-%R u%.3f ",
+	cacheMsg(nt, best, C_VPASS, "T%6d/%6d %C-%R u%.3f ",
 		0, 0, cacheCost(best), cacheRootCost(best),
 		(double) cacheCost(best)/cacheNodes(best));
 	cacheMsg(nt, best, C_VPASS, "x%3d     ", cacheMixedNodes(best));

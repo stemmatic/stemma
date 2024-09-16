@@ -55,6 +55,9 @@ extern void		txRestore(Taxa *tx, CodeID *codes);
 extern void		txPermuteTaxon(Taxa *taxa, Cursor node);
 
 extern Length	txApographic(Taxa *taxa, Cursor node, Cursor outgroup);
+#if DO_POLE
+extern Length	txPole(Taxa *taxa, Cursor node);
+#endif
 
 extern vunit	txVprint(Taxa *taxa, Cursor node, Cursor vv);
 

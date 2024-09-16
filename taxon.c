@@ -249,6 +249,36 @@ Length
 	return cost;
 }
 
+#if DO_POLE
+Length
+	txPole(Taxa *taxa, Cursor node)
+{
+	Length pole = 0;
+	Cursor vv;
+
+#if 0
+	for (vv = 0; vv < taxa->nVunits; vv++)
+		pole += txBase(taxa,node)[vv] != 1;		// STATES[1] == '0'
+#else
+	Length attested = 0;
+	for (vv = 0; vv < taxa->nVunits; vv++) {
+		vunit vu = txBase(taxa,node)[vv];
+		if (vu != MISSING) {
+			pole += txBase(taxa,node)[vv] != 1;		// STATES[1] == '0'
+			attested++;
+		}
+	}
+	if (attested > 0) {
+		// Scale pole to nVunits
+		pole *= taxa->nVunits;
+		pole /= attested;
+	} else
+		pole = taxa->nVunits;
+#endif
+	return pole;
+}
+#endif
+
 vunit
 	txVprint(Taxa *taxa, Cursor node, Cursor vv)
 {

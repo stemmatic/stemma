@@ -4,24 +4,19 @@
 
 // Compile-time switches for various reticulation-related issues
 #define DO_MAXMIX 1
-#define DO_MP2 0
+#define DO_POLE 1
+#define NO_TRIPS 0
 #define ROOTFIX 0
 
 // CLINK - Constant link (as between an original and a corrector)
 #define CLINK 0
-#define CLINK_FR 0
-#define CLINK_TO 1
-
-#if DO_MP2
-#define MP2(a,b) (b)
-#else
-#define MP2(a,b) (a)
-#endif
+#define CLINK_FR 4
+#define CLINK_TO 5
 
 #define MMP(a,b) (a)
 #define RRP(a,b) (a)
 
-#define MAGIC (0xC0DE000A)
+#define MAGIC (0xC0DE000B)
 
 // Some types in all modules
 typedef short Cursor;
@@ -33,7 +28,6 @@ typedef unsigned char Stratum;
 // Tree length type
 typedef unsigned long Length;
 extern Length RetCost;
-extern Length MaxMP2;
 
 // Some standard CCI/ICLisms:
 #define NO  0

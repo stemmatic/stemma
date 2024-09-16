@@ -38,6 +38,9 @@ struct Cache {
 	unsigned long *codes;	// Serial numbers of taxa
 	Stratum *time;			// Time strata [OBSOLETE]
 	vunit **states;			// States of taxa
+#if DO_POLE
+	Length *poles;			// [T] Precomputed Pole Positions
+#endif
 	Flag **noanc;			// Constraint of no ancestors [OBSOLETE]
 };
 
@@ -122,6 +125,7 @@ int
 	return nMixed;
 }
 
+
 //////////////////////////////////
 //
 //	Cache and Restore: Saves solution states
@@ -145,6 +149,10 @@ Cache *
 	newmem(cache->codes, tx->nTotal);
 	newmem(cache->time, tx->nTotal);
 	newmem(cache->states, tx->nTotal);
+#if DO_POLE
+	newmem(cache->poles, tx->nTotal);
+	ZERO(cache->poles, tx->nTotal);
+#endif
 
 	NEWMAT(cache->noanc, tx->nTotal, tx->nTotal);
 	ASET(cache->noanc[0], 0, tx->nTotal * tx->nTotal);
@@ -179,6 +187,9 @@ void
 		free(cache->states[tt]);
 	}
 
+#if DO_POLE
+	free(cache->poles);
+#endif
 	free(cache->inuses);
 	free(cache->states);
 	free(cache->time);
@@ -219,6 +230,34 @@ int
 	return cacheBetter(nt, a->cost, a->rootCost, a->nLinks, b);
 }
 
+#if DO_POLE
+int
+	cachePoleConstrained(Net *nt)
+{
+	register Taxa *tx = nt->taxa;
+	Cursor to;
+
+	for (to = 0; to < nt->maxTax; to++) {
+		if (!nt->inuse[to])
+			continue;
+		if (nt->nParents[to] < 2)
+			continue;
+
+		if (nt->banMixed[to]) {
+			printf("\nMix ban violation for %d:'%s'\n", to, txName(tx,to));
+			fflush(stdout);
+			return YES;
+		}
+		if (!ntPoleCheck(nt, to)) {
+			printf("\nPole problem for %d:'%s'\n", to, txName(tx,to));
+			fflush(stdout);
+			return YES;
+		}
+	}
+	return NO;
+}
+#endif
+
 int
 	cacheSave(Net *nt, Length cost, Cache *cache)
 {
@@ -234,34 +273,10 @@ int
 	if (!cacheBetter(nt, cost, rootCost, nt->nLinks, cache))
 		return NO;
 
-#if 0 && DO_MP2
-	/* Catch MP2 violations */
-	{
-		int nBr = 2*tx->nExtant;
-		int ii;
-
-		for (ii = 0; ii < nBr; ii++) {
-			Branch *br = &nt->br[ii];
-			if (br->nxtBr == -2 && nt->nParents[br->to] > 1) {
-				int nMiss = 0, vv;
-				vunit *fb = txBase(tx,br->fr);
-				vunit *tb = txBase(tx,br->to);
-				for (vv = 0; vv < tx->nVunits; vv++) {
-					if (fb[vv] == MISSING && tb[vv] != MISSING)
-						nMiss++;
-				}
-				if (nMiss > MaxMP2) {
-					fflush(stdout);
-					fprintf(stderr, "\nMP2: %d > %ld :- ", nMiss, MaxMP2);
-					fprintf(stderr, "ii:%d, ", ii);
-					fprintf(stderr, "fr=%d/%s => to=%d/%s\n",
-						br->fr, txName(tx,br->fr),
-						br->to, txName(tx,br->to));
-				}
-				assert( nMiss <= MaxMP2 );
-			}
-		}
-	}
+#if 0 && DO_POLE
+	// Very slow, so hoist the check closer to where it happens
+	// until it never trips, then turn it off.
+	assert( !cachePoleConstrained(nt) );
 #endif
 
 	cache->cached = YES;
@@ -284,6 +299,9 @@ int
 	cache->outgroup = nt->outgroup;
 
 	ACPY(cache->inuses,nt->inuse,tx->nTotal);
+#if DO_POLE
+	ACPY(cache->poles,nt->poles,tx->nTotal);
+#endif
 
 	for (tt = 0; tt < tx->nTotal; tt++) {
 		if (nt->codes[tt] == cache->codes[tt])
@@ -305,6 +323,10 @@ void
 	if (nt->codes[tt] != cache->codes[tt]) {
 		nt->codes[tt] = cache->codes[tt];
 		ACPY(txBase(tx,tt), cache->states[tt], tx->nVunits);
+#if DO_POLE
+		if (tt >= tx->nExtant)
+			nt->poles[tt] = cache->poles[tt];
+#endif
 		txPermuteTaxon(tx,tt);
 	}
 }
@@ -321,6 +343,9 @@ Length
 	nt->outgroup = cache->outgroup;
 
 	ACPY(nt->inuse,cache->inuses,tx->nTotal);
+#if DO_POLE
+	ACPY(nt->poles,cache->poles,tx->nTotal);
+#endif
 
 	for (tt = 0; tt < tx->nTotal; tt++) {
 		if (nt->codes[tt] != cache->codes[tt]) {
@@ -417,6 +442,7 @@ int
 	FREAD(&rootCost, sizeof rootCost, 1, fp);
 
 	// Only Read if it is better.
+	// Q:: call cacheBetter() instead?
 	if (cost > cache->cost)
 		return -1;
 	if (cost == cache->cost) {
@@ -447,6 +473,12 @@ if (!getenv("RET")) RetCost = retCost;
 		cache->codes[tt] = TaxonCode++;
 		FREAD(cache->noanc[tt], sizeof cache->noanc[tt][0], tx->nTotal, fp);
 		FREAD(cache->states[tt], sizeof cache->states[tt][0], tx->nVunits, fp);
+#if DO_POLE
+		vunit *svBase = txBase(tx,tt);
+		txBase(tx,tt) = cache->states[tt];
+		cache->poles[tt] = txPole(tx, tt);
+		txBase(tx,tt) = svBase;
+#endif
 	}
 
 	// Read Links
