@@ -16,7 +16,7 @@
 #define MMP(a,b) (a)
 #define RRP(a,b) (a)
 
-#define MAGIC (0xC0DE000B)
+#define MAGIC (0xC0DE000A)
 
 // Some types in all modules
 typedef short Cursor;
