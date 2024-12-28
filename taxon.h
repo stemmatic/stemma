@@ -8,8 +8,8 @@
 // Maximum length of taxon name, mainly for I/O buffers, else dynamic
 #define TAXNAME 64
 #define TXNOT (-1)
-#define MAXSTATES 24
-#define STATES "?0123456789abcdefghijkl-"
+#define STATES "?0123456789abcdefghijklnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-"
+#define MAXSTATES (sizeof(STATES) - 1)
 
 // Type for variation units (i.e. characters, a term already used in C).
 typedef unsigned char vunit;
@@ -26,6 +26,7 @@ typedef struct Taxon {
 	int frag;			// Fragmentary?
 	Flag *isSing;		// [nVunits] Whether the base variant is singular
 	unsigned nSings;	// Number of Singular readings
+	int correcting;     // Index of taxon that this one may be correcting.
 } Taxon;
 
 typedef struct Taxa {
@@ -65,6 +66,7 @@ extern vunit	txVprint(Taxa *taxa, Cursor node, Cursor vv);
 #define txFrag(tx,i) (tx)->taxa[i].frag
 #define txNSings(tx,i) (tx)->taxa[i].nSings
 #define txIsSingular(tx,i) (tx)->taxa[i].isSing
+#define txCorrecting(tx,i) (tx)->taxa[i].correcting
 
 #define txVisit(tx,i) (tx)->visit[i]
 #define txUnvisit(tx) ZERO((tx)->visit, tx->nTotal)

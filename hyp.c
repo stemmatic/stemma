@@ -59,10 +59,18 @@ int
 
 	// Do reconnections. 
 	// O:: Is use of nt->Ups[] and nt->Dns[] faster?
+	//     Or could I get into problems if ntDisconnect() changes them?
 	for (t = 0; t < nt->maxTax; t++) {
 		if (t == hyp)
 			continue;
-		if (nt->connection[t][tt] && nt->inuse[t]) {
+		if (!nt->inuse[t])
+			continue;
+
+		if (nt->connection[t][tt]
+#if DO_CLINK
+		&& t != txCorrecting(tx,tt)
+#endif
+		) {
 			link->from = t;
 			link->to = tt;
 			ntDisconnect(nt, link);
@@ -70,7 +78,11 @@ int
 			ntConnect(nt, link);
 		}
 
-		if (nt->connection[tt][t] && nt->inuse[t]) {
+		if (nt->connection[tt][t]
+#if DO_CLINK
+		&& tt != txCorrecting(tx,t)
+#endif
+		) {
 			link->from = tt;
 			link->to = t;
 			ntDisconnect(nt, link);
@@ -108,7 +120,9 @@ break_out:
 	for (t = 0; t < nt->maxTax; t++) {
 		if (t == tt)
 			continue;
-		if (nt->connection[t][hyp] && nt->inuse[t]) {
+		if (!nt->inuse[t])
+			continue;
+		if (nt->connection[t][hyp]) {
 			link->from = t;
 			link->to = hyp;
 			ntDisconnect(nt, link);
@@ -116,7 +130,7 @@ break_out:
 			ntConnect(nt, link);
 		}
 
-		if (nt->connection[hyp][t] && nt->inuse[t]) {
+		if (nt->connection[hyp][t]) {
 			link->from = hyp;
 			link->to = t;
 			ntDisconnect(nt, link);
@@ -202,6 +216,11 @@ int
 		mixed1 = (nt->nParents[t1] - 1);
 		frag1 = txFrag(tx,t1);
 
+#if DO_CLINK
+			if (txCorrecting(tx,t1) == tt)
+				continue;
+#endif
+
 		link->from = tt;
 		link->to = t1;
 		ntDisconnect(nt, link);
@@ -226,10 +245,10 @@ int
 			} else {
 				if (!frag1 && !frag2 && nMixed >= nUnmixed) continue;
 			}
-#if CLINK
-			if (!nt->connection[CLINK_FR][CLINK_TO])
+#if DO_CLINK
+			if (txCorrecting(tx,t2) == tt)
 				continue;
-#endif	
+#endif
 
 			link->from = tt;
 			link->to = t2;
@@ -1042,6 +1061,11 @@ static Length
 		if (nt->nParents[t2] == 1)
 			continue;
 
+#if DO_CLINK
+		if (txCorrecting(tx,t2) == t1)
+			continue;
+#endif
+
 		justCached = NO;
 		link->from = t1;
 		link->to = t2;
@@ -1117,6 +1141,11 @@ static Length
 			if (nt->nParents[t2] == 1)
 				continue;
 			
+#if DO_CLINK
+			if (txCorrecting(tx,t2) == t1)
+				continue;
+#endif
+
 			link->from = t1;
 			link->to = t2;
 			ntDisconnect(nt, link);
@@ -1156,9 +1185,27 @@ extern Length
 	hypLinkUp(Net *nt, Cache *curr, Cache *best)
 {
 	int n;
+	int nLeft = nt->taxa->nExtant - 1;	// Number of taxa left to link.
+
+#if DO_CLINK
+	// Link up correctors to their correcting manuscript
+	for (n = 0; n < nt->taxa->nExtant; n++) {
+		Link link[1];
+		link->from = txCorrecting(nt->taxa,n);
+		link->to = n;
+
+		if (link->from == TXNOT)
+			continue;
+		ntConnect(nt, link);
+
+		Length got = ntCost(nt);
+		cacheSave(nt, got, curr);
+		cacheMsg(nt, curr, C_VSWAP, "%N->%N/%C\n", link->from, link->to, got);
+	}
+#endif
 
 	// Initial link up
-	for (n = 0; n < nt->taxa->nExtant-1; n++) {
+	for (n = 0; n < nLeft; n++) {
 		Length got, cost;
 		Cursor to;
 

@@ -393,9 +393,15 @@ int
 	Cursor anc;
 	Cursor  up, dn;
 
-#if CLINK
-	if (!nt->connection[CLINK_FR][CLINK_TO])
-		return YES;
+#if 0 && DO_CLINK
+	// All of these should have taken care of earlier.
+	Cursor tt;
+	for (tt = 0; tt < tx->nExtant; tt++) {
+		Cursor org = txCorrecting(tx,tt);
+		if (org != TXNOT && !nt->connection[org][tt]) {
+			return YES;
+		}
+	}
 #endif
 
 	// If we have an outgroup, don't let it be mixed.

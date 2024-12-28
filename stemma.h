@@ -7,11 +7,7 @@
 #define DO_POLE 1
 #define NO_TRIPS 0
 #define ROOTFIX 0
-
-// CLINK - Constant link (as between an original and a corrector)
-#define CLINK 0
-#define CLINK_FR 4
-#define CLINK_TO 5
+#define DO_CLINK 1
 
 #define MMP(a,b) (a)
 #define RRP(a,b) (a)

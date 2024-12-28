@@ -205,6 +205,9 @@ static void
 		fprintf(fpout, ", fragmentary");
 	fprintf(fpout, "):\n");
 
+	if (txCorrecting(tx,t) != TXNOT)
+		fprintf(fpout, "Correcting %s; ", txName(tx,txCorrecting(tx,t)));
+
 	fprintf(fpout, "Extant descendents of %s:", txName(tx,t));
 	for (p = 0; p < tx->nExtant; p++) {
 		if (nt->inuse[t] && nt->descendents[t][p])
@@ -371,9 +374,13 @@ static void
 					continue;
 				if (p2 == p1)
 					continue;
-				if (txRdgs(tx,t)[vv] == txRdgs(tx,p2)[vv]
-				|| txRdgs(tx,p2)[vv] == MISSING)
+				if (txRdgs(tx,t)[vv] == txRdgs(tx,p2)[vv])
 					break;
+#if 0
+				// Why did I do this? Surely a lacunose parent can't contribute readings...
+				if (txRdgs(tx,p2)[vv] == MISSING)
+					break;
+#endif
 			}
 			if (p2 < nt->maxTax)
 				continue;
@@ -1050,6 +1057,7 @@ static void
 	int m=0, s=0, g=0;	// For calculation of ci, ri.
 	int nodeRdg = MISSING;
 	int inGroup=0, outGroup=0;		// For calculation of apography index
+	int tp = 0, fp = 0, fn = 0, tn = 0;	// For calculation of phi/MCC.
 
 	fprintf(log, "Var %d: ", vv);
 
@@ -1117,6 +1125,14 @@ static void
 					logSupporter(log, nt, tx, t);
 					if (t < tx->nExtant && rdg == nodeRdg)
 						inGroup++;
+					if (t < tx->nExtant) {
+						if (nodeRdg == MISSING || txRdgs(tx,t)[vv] == MISSING)
+							;
+						else if (nodeRdg == txRdgs(tx,t)[vv])
+							tp++;
+						else
+							fn++;
+					}
 				}
 			}
 			fprintf(log, "\n        ");
@@ -1131,6 +1147,14 @@ static void
 					logSupporter(log, nt, tx, t);
 					if (t < tx->nExtant && rdg == nodeRdg)
 						outGroup++;
+					if (t < tx->nExtant) {
+						if (nodeRdg == MISSING || txRdgs(tx,t)[vv] == MISSING)
+							;
+						else if (nodeRdg == txRdgs(tx,t)[vv])
+							fp++;
+						else
+							tn++;
+					}
 				}
 			}
 		}
@@ -1146,6 +1170,11 @@ static void
 			double a = inGroup;
 			double b = outGroup + inGroup;
 			fprintf(log, ", ai=%.3f, si=%.3f", (a/b), (a/b) * ((a-1)/(b-1)));
+
+			fprintf(log, ", tp=%d, fp=%d, fn=%d, tn=%d", tp, fp, fn, tn);
+			int sq = ((tp+fn)*(fp+tn)*(tp+fp)*(fn+tn));
+			double phi = (sq > 0) ? (tp*tn - fp*fn) / sqrt(sq) : 0.0;
+			fprintf(log, ", phi=%.3f", phi);
 		}
 		fprintf(log, "\n");
 	}
@@ -1344,6 +1373,7 @@ void
 	logMixes(log, nt, ns);
 	logMixtures(lg, nt);
 	logTree(log, nt, ns);
+	logTree(stdout, nt, ns);
 
 	if ((envp = getenv("STATS")))
 		logStats(logFile(lg, lgSTAT), nt);

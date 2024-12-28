@@ -10,9 +10,6 @@
 #include "stemma.h"
 #include "taxon.h"
 
-// Prefix of taxon names to ignore the singularity count.
-#define IGNORE_COUNT_PREFIX '_'
-
 static vunit *
 	txInVars(Taxa *tx, Cursor tt, const char *vars)
 {
@@ -69,9 +66,8 @@ static enum VarType
 		if (ss == nStates) {
 			ss = nStates++;
 			states[ss] = txRdgs(tx,tt)[vv];
-			if (*txName(tx,tt) != IGNORE_COUNT_PREFIX)
-				count[ss] = 1;
-		} else if (*txName(tx,tt) != IGNORE_COUNT_PREFIX) {
+			count[ss] = 1;
+		} else {
 			count[ss]++;
 			if (count[ss] == 2)
 				dblCount++;
@@ -158,6 +154,7 @@ Taxa *
 		assert( taxa->rdgs[nt] == taxa->base[nt] );
 
 		tx->nSings = 0;
+		tx->correcting = TXNOT;
 
 		newmem(tx->isSing, taxa->nVunits);
 		ZERO(tx->isSing, taxa->nVunits);
@@ -173,6 +170,27 @@ Taxa *
 
 	newmem(taxa->permute, taxa->nVunits);
 	taxa->perturbed = NO;
+
+	// Find correctors
+	for (nt = 0; nt < taxa->nExtant; nt++) {
+		Taxon *tx = &taxa->taxa[nt];
+		char *colon = strrchr(tx->name, ':');
+		int hand = 0;
+
+		// Not a corrector
+		if (!colon)
+			continue;
+
+		// Find latest corrector
+		hand = atoi(colon+1);
+		while (hand > 0) {
+			*colon = EOS;
+			sprintf(name, "%s:%d", tx->name, --hand);
+			*colon = ':';
+			if ((tx->correcting = txFind(taxa, name)) != TXNOT)
+				break;
+		}
+	}
 
 	return taxa;
 }
@@ -203,13 +221,13 @@ txFind(const Taxa *tx, const char *name)
 	Cursor tt;
 
 	if (!name)
-		return -1;
+		return TXNOT;
 
 	for (tt = 0; tt < tx->nTotal; tt++) {
 		if (strcmp(txName(tx,tt), name) == 0)
 			return tt;
 	}
-	return -1;
+	return TXNOT;
 }
 
 void
