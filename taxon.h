@@ -8,7 +8,7 @@
 // Maximum length of taxon name, mainly for I/O buffers, else dynamic
 #define TAXNAME 64
 #define TXNOT (-1)
-#define STATES "?0123456789abcdefghijklnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-"
+#define STATES "?0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-"
 #define MAXSTATES (sizeof(STATES) - 1)
 
 // Type for variation units (i.e. characters, a term already used in C).
