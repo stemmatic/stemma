@@ -22,7 +22,7 @@ all:	$(APPEXES)
 #	$(MAKE) -C Utest
 
 $(APPEXES): $(BIN)/%: %
-	ln -f $< $(BIN)/
+	cp -f $< $(BIN)/
 
 $(APPS):	$(APPOBJS)
 
