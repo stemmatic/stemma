@@ -227,7 +227,7 @@ int
 	ntConstraints(Net *nt, FILE *fcon)
 {
 	Cursor from = TXNOT;
-	char buf[20];
+	char buf[21];
 	enum states { doFrom, doTo, doTime, } state;
 	char *deMix = getenv("DEMIX");
 	int mixStratum = (deMix) ? atoi(deMix) : 0;    // Sentinel: OK for ROOT to not be mixed.
