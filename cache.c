@@ -243,6 +243,16 @@ int
 		if (nt->nParents[to] < 2)
 			continue;
 
+#if UNMIX
+		for (Cursor *un = nt->unMixed; un < nt->endMixed; un++) {
+			if (!nt->descendents[to][*un])
+				continue;
+			printf("\nMix ban violation for %d:'%s' --> %d:'%s'\n",
+				to, txName(tx,to), *un, txName(tx,*un));
+			fflush(stdout);
+			return YES;
+		}
+#endif
 		if (nt->banMixed[to]) {
 			printf("\nMix ban violation for %d:'%s'\n", to, txName(tx,to));
 			fflush(stdout);
@@ -408,7 +418,7 @@ int cacheClose(Cache *cache)
 	return YES;
 }
 
-#define FREAD(vp, sz, nn, fp) if (fread((vp), (sz), (nn), (fp)) != (nn)) abort(); else
+#define FREAD_CK(vp, sz, nn, fp) if (fread((vp), (sz), (nn), (fp)) != (nn)) abort(); else
 
 // Return 1 if a better cached soln is read, 0 if a tie (and not read), -1 if the cached is worse.
 
@@ -430,16 +440,16 @@ int
 	if (fread(&magic, sizeof magic, 1, fp) == 0)
 		return -1;
 	assert( magic == MAGIC );
-	FREAD(&nTotal, sizeof nTotal, 1, fp);
+	FREAD_CK(&nTotal, sizeof nTotal, 1, fp);
 	assert( nTotal == tx->nTotal );
-	FREAD(&nVunits, sizeof nVunits, 1, fp);
+	FREAD_CK(&nVunits, sizeof nVunits, 1, fp);
 	assert( nVunits == tx->nVunits );
 
-	FREAD(&nLinks, sizeof nLinks, 1, fp);
+	FREAD_CK(&nLinks, sizeof nLinks, 1, fp);
 
-	FREAD(&cost, sizeof cost, 1, fp);
-	FREAD(&obsolete, sizeof obsolete, 1, fp);
-	FREAD(&rootCost, sizeof rootCost, 1, fp);
+	FREAD_CK(&cost, sizeof cost, 1, fp);
+	FREAD_CK(&obsolete, sizeof obsolete, 1, fp);
+	FREAD_CK(&rootCost, sizeof rootCost, 1, fp);
 
 	// Only Read if it is better.
 	// Q:: call cacheBetter() instead?
@@ -461,18 +471,18 @@ int
 	cache->rootCost = rootCost;
 
 	// Read State
-	FREAD(&retCost, sizeof retCost, 1, fp);
+	FREAD_CK(&retCost, sizeof retCost, 1, fp);
 if (!getenv("RET")) RetCost = retCost;
-	FREAD(&cache->maxTax, sizeof cache->maxTax, 1, fp);
-	FREAD(&cache->nTaxa, sizeof cache->nTaxa, 1, fp);
-	FREAD(&cache->nNodes, sizeof cache->nNodes, 1, fp);
-	FREAD(&cache->outgroup, sizeof cache->outgroup, 1, fp);
-	FREAD(cache->inuses, sizeof cache->inuses[0], tx->nTotal, fp);
-	FREAD(cache->time, sizeof cache->time[0], tx->nTotal, fp);
+	FREAD_CK(&cache->maxTax, sizeof cache->maxTax, 1, fp);
+	FREAD_CK(&cache->nTaxa, sizeof cache->nTaxa, 1, fp);
+	FREAD_CK(&cache->nNodes, sizeof cache->nNodes, 1, fp);
+	FREAD_CK(&cache->outgroup, sizeof cache->outgroup, 1, fp);
+	FREAD_CK(cache->inuses, sizeof cache->inuses[0], tx->nTotal, fp);
+	FREAD_CK(cache->time, sizeof cache->time[0], tx->nTotal, fp);
 	for (tt = 0; tt < tx->nTotal; tt++) {
 		cache->codes[tt] = TaxonCode++;
-		FREAD(cache->noanc[tt], sizeof cache->noanc[tt][0], tx->nTotal, fp);
-		FREAD(cache->states[tt], sizeof cache->states[tt][0], tx->nVunits, fp);
+		FREAD_CK(cache->noanc[tt], sizeof cache->noanc[tt][0], tx->nTotal, fp);
+		FREAD_CK(cache->states[tt], sizeof cache->states[tt][0], tx->nVunits, fp);
 #if DO_POLE
 		vunit *svBase = txBase(tx,tt);
 		txBase(tx,tt) = cache->states[tt];

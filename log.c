@@ -351,9 +351,21 @@ static void
 	double nMixRdgs = 0.0;	// Number of mixed readings
 	int nOverlaps = 0;		// Overlap of the parents
 	int nMiss = 0;			// Number of missing parents states
+	char *badMix = "";
 
+#if UNMIX
+		for (Cursor *un = nt->unMixed; un < nt->endMixed; un++) {
+			if (!nt->descendents[t][*un])
+				continue;
+			badMix = "!!!";
+			break;
+		}
+#else
+	if (nt->banMixed[t])
+		badMix = "!";
+#endif
 	fprintf(log, "%sMixed Node %s (cost "CST_F" > RetCost"CST_F"):\n",
-		(nt->banMixed[t]) ? "!" : "", txName(tx,t), nt->cumes[t], RetCost*(nt->nParents[t]-1));
+		badMix, txName(tx,t), nt->cumes[t], RetCost*(nt->nParents[t]-1));
 	for (p1 = 0; p1 < nt->maxTax; p1++) {
 		if (!nt->inuse[p1])
 			continue;
@@ -1351,8 +1363,8 @@ void
 			fprintf(log, "%s ", lg->argv[n]);
 		fprintf(log, "\n");
 	}
-	fprintf(log, "Switches: DO_MAXMIX=%d DO_POLE=%d NO_TRIPS=%d ROOTFIX=%d\n",
-		DO_MAXMIX, DO_POLE, NO_TRIPS, ROOTFIX);
+	fprintf(log, "Compile-time switches: DO_MAXMIX=%d DO_POLE=%d NO_TRIPS=%d UNMIX=%d ROOTFIX=%d\n",
+		DO_MAXMIX, DO_POLE, NO_TRIPS, UNMIX, ROOTFIX);
 	fprintf(log, "***********************\n\n");
 
 	logAnalysis(log, nt);

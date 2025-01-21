@@ -3,11 +3,12 @@
 */
 
 // Compile-time switches for various reticulation-related issues
+#define DO_CLINK 1
 #define DO_MAXMIX 1
 #define DO_POLE 1
+#define UNMIX 1
 #define NO_TRIPS 0
 #define ROOTFIX 0
-#define DO_CLINK 1
 
 #define MMP(a,b) (a)
 #define RRP(a,b) (a)

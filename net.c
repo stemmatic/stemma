@@ -65,6 +65,11 @@ Net *
 	newmem(nt->banMixed, tx->nTotal);
 	ASET(nt->banMixed, 0, tx->nTotal);
 #endif
+#if UNMIX
+	newmem(nt->unMixed, tx->nExtant);
+	ASET(nt->unMixed, 0, tx->nExtant);
+	nt->endMixed = nt->unMixed;
+#endif
 
 	// Align and linearize connection matrix for ntPropagate()
 	NEWMAT(nt->connection, alignTotal, alignTotal);
@@ -238,12 +243,20 @@ int
 	
 		if (state == doTime && *buf != '<') {
 			int stratum = atoi(buf);
-			if (stratum <= mixStratum && from != TXNOT)
+			if (stratum <= mixStratum && from != TXNOT) {
 				nt->banMixed[from] = YES;
+#if UNMIX
+				*nt->endMixed++ = from;
+#endif
+			}
 
 			// deMix taxa starting with an underscore
-			if (txName(nt->taxa, from)[0] == '_')
+			if (txName(nt->taxa, from)[0] == '_') {
 				nt->banMixed[from] = YES;
+#if UNMIX
+				*nt->endMixed++ = from;
+#endif
+			}
 			continue;
 		}
 
@@ -472,6 +485,13 @@ int
 
 	if (nt->banMixed[to])
 		return NO;
+#if UNMIX
+	for (Cursor *un = nt->unMixed; un < nt->endMixed; un++) {
+		if (!nt->descendents[to][*un])
+			continue;
+		return NO;
+	}
+#endif
 
 	Length toPole = nt->poles[to];
 	Length stretch = ntPoleStretch(nt, to);
@@ -966,6 +986,14 @@ static Length
 #endif
 	if (nt->banMixed[to])
 		return bound;
+#if UNMIX
+	for (Cursor *un = nt->unMixed; un < nt->endMixed; un++) {
+		if (!nt->descendents[to][*un])
+			continue;
+		return bound;
+	}
+#endif
+
 #endif
 
 	pgy = ntProgeny(nt, to);

@@ -25,6 +25,10 @@ typedef struct Net {
 	Length *poles;		// [T] Pole positions
 	int *banMixed;		// [T] Set to forbid a taxon from being mixed
 #endif
+#if UNMIX
+	Cursor *unMixed;	// [T] Set to forbid a taxon and its parents from being mixed
+	Cursor *endMixed;	// End of unMixed[]
+#endif
 
 	int nLinks;			// Number of links
 	Flag **connection;	// [T][T] Connection Array, nTotal x nTotal
