@@ -865,11 +865,13 @@ static void
 		return;
 	}
 
-	fprintf(log, "Root: "NAM_F" %*s %3ld %4ld\n",
+	fprintf(log, "                               Cost  Dist~Normd Delta ?Miss\n");
+	fprintf(log, "Root: "NAM_F" %*s %3ld "CST_F"~"CST_F"\n",
 		txName(tx,work->from),
 		24 - (int) strlen(txName(tx,work->from)), "|  ",
 		nt->cumes[work->from],
-		txApographic(tx,work->from,nt->outgroup));
+		txApographic(tx,work->from,nt->outgroup),
+		txPole(tx,work->from));
 
 	// Loop over each character
 	for (link = work; link < end; link++) {
@@ -881,7 +883,7 @@ static void
 		fprintf(log, " %3ld", nt->cumes[to]);
 		fprintf(log, " "CST_F"", txApographic(tx,to,nt->outgroup)); 
 		fprintf(log, "~"CST_F"", txPole(tx,to));
-		fprintf(log, " %4ld", txApographic(tx,to,nt->outgroup)
+		fprintf(log, " %5ld", txApographic(tx,to,nt->outgroup)
 								- txApographic(tx,fr,nt->outgroup));
 #if 1 /* was: DO_MP2 */
 		{
