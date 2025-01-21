@@ -7,6 +7,9 @@
 #define DO_MAXMIX 1
 #define DO_POLE 1
 #define UNMIX 1
+#define NO_TC 1
+#define IMIXD 1
+#define IPOLE 0
 #define NO_TRIPS 0
 #define ROOTFIX 0
 

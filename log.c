@@ -349,7 +349,6 @@ static void
 	Cursor mpars[5];		// Identities of the parentage
 	int mps = 0;			// Number of mixed parents
 	double nMixRdgs = 0.0;	// Number of mixed readings
-	int nOverlaps = 0;		// Overlap of the parents
 	int nMiss = 0;			// Number of missing parents states
 	char *badMix = "";
 
@@ -366,6 +365,8 @@ static void
 #endif
 	fprintf(log, "%sMixed Node %s (cost "CST_F" > RetCost"CST_F"):\n",
 		badMix, txName(tx,t), nt->cumes[t], RetCost*(nt->nParents[t]-1));
+
+	// Print individual links
 	for (p1 = 0; p1 < nt->maxTax; p1++) {
 		if (!nt->inuse[p1])
 			continue;
@@ -373,7 +374,6 @@ static void
 			continue;
 		nn = 0;
 		nMiss = 0;
-		fprintf(log, "\t"CST_F" %4s:", txPole(tx,p1), txName(tx,p1));
 		for (vv = 0; vv < tx->nVunits; vv++) {
 			if (txRdgs(tx,p1)[vv] == MISSING && txRdgs(tx,t)[vv] != MISSING)
 				nMiss++;
@@ -388,17 +388,11 @@ static void
 					continue;
 				if (txRdgs(tx,t)[vv] == txRdgs(tx,p2)[vv])
 					break;
-#if 0
-				// Why did I do this? Surely a lacunose parent can't contribute readings...
-				if (txRdgs(tx,p2)[vv] == MISSING)
-					break;
-#endif
 			}
 			if (p2 < nt->maxTax)
 				continue;
 			nn++;
 		}
-		fprintf(log, " ---> %d (?%d)\n", nn, nMiss);
 		if (mps == MMAX)
 			continue;
 		nMixRdgs += nn;
@@ -406,10 +400,19 @@ static void
 		mpars[mps] = p1;
 		mps++;
 	}
-	fprintf(log, "Mixed %%ages:");
+
+	// Calc & print the mixture percentages
 	for (nn = 0; nn < mps; nn++) {
 		double linkPct = 100.0*mrdgs[nn]/nMixRdgs;
-		fprintf(log, " %s=%.0f%%", txName(tx,mpars[nn]), linkPct);
+		int pp = mpars[nn];
+		fprintf(log, "\t"CST_F" %4s:",
+			txPole(tx,pp), txName(tx,pp));
+		fprintf(log, " ---> "CST_F"",
+			(Length) mrdgs[nn]);
+		fprintf(log, " %.0f%%\n",
+			linkPct);
+
+		// Collect net stats for identifying the biggest share
 		if (ns) {
 			Cursor rr;
 			int amBiggest = YES;
@@ -421,36 +424,15 @@ static void
 				else
 					amBiggest = NO;
 			}
-			ns->retLinks[ns->nEnd].fr = mpars[nn];
+			ns->retLinks[ns->nEnd].fr = pp;
 			ns->retLinks[ns->nEnd].to = t;
 			ns->retLinks[ns->nEnd].pct = linkPct;
 			ns->retLinks[ns->nEnd].biggest = amBiggest;
 			ns->nEnd++;
 		}
 	}
-	fprintf(log, "\n");
 
-	// Calculate overlapping amount
-	for (vv = 0; vv < tx->nVunits; vv++) {
-		for (nn = 1; nn < mps; nn++) {
-			if (txRdgs(tx,mpars[nn])[vv] != txRdgs(tx,mpars[0])[vv])
-				break;
-		}
-		if (nn == mps)
-			nOverlaps++;
-	}
-	// Calculate MISSING Mixed Parentage:
-	nMiss = 0;
-	for (vv = 0; vv < tx->nVunits; vv++) {
-		for (nn = 0; nn < mps; nn++) {
-			if (txRdgs(tx,mpars[nn])[vv] == MISSING
-			&& txRdgs(tx,t)[vv] != MISSING)
-				nMiss++;
-		}
-	}	
-	fprintf(log, "nV(%d) - nOverlaps(%d) - nMixRdgs(%d) = %d ; nMiss: %d\n",
-		tx->nVunits, nOverlaps, (int) nMixRdgs, tx->nVunits - nOverlaps - (int) nMixRdgs, nMiss);
-
+	// Common ancestors & bi-polarity violations
 	block {
 		int nCAs;
 		int mrca = logMRCA(nt, t, &nCAs);
@@ -459,23 +441,7 @@ static void
 			nCAs, txName(tx,mrca), txApographic(tx,mrca,nt->outgroup), txPole(tx,mrca), nBPviols);
 	}
 
-#if 0
-	// Calculate MRCA Pole Stretch
-	block {
-		int nCAs;
-		int mrca = logMRCA(nt, t, &nCAs);
-		Length hi = 0L, lo = ~0L;
-		for (nn = 0; nn < mps; nn++) {
-			Length pp = txApographic(tx,mpars[nn],mrca);
-			if (pp > hi) hi = pp;
-			if (pp < lo) lo = pp;
-		}
-		fprintf(log, "MRCA Pole Stretch: hi:"CST_F" - lo:"CST_F" = "CST_F" @ "CST_F"\n",
-			hi, lo, hi - lo, txApographic(tx,t,mrca));
-	}
-#endif
-
-	// Calculate Pole Stretch
+	// Calc & print pole stretch
 	block {
 		Length hi = 0L, lo = ~0L;
 		for (nn = 0; nn < mps; nn++) {
@@ -483,8 +449,9 @@ static void
 			if (pp > hi) hi = pp;
 			if (pp < lo) lo = pp;
 		}
-		fprintf(log, "     Pole Stretch: hi:"CST_F" - lo:"CST_F" = "CST_F" @ "CST_F"\n",
-			hi, lo, hi - lo, txPole(tx, t));
+		char *didTC = (txPole(tx,t) < lo) ? "!TC!" : "";
+		fprintf(log, "Pole Stretch: hi:"CST_F" - lo:"CST_F" = "CST_F" @ "CST_F" %s\n",
+			hi, lo, hi - lo, txPole(tx, t), didTC);
 		*totStretch += hi - lo;
 	}
  
@@ -1365,8 +1332,8 @@ void
 			fprintf(log, "%s ", lg->argv[n]);
 		fprintf(log, "\n");
 	}
-	fprintf(log, "Compile-time switches: DO_MAXMIX=%d DO_POLE=%d NO_TRIPS=%d UNMIX=%d ROOTFIX=%d\n",
-		DO_MAXMIX, DO_POLE, NO_TRIPS, UNMIX, ROOTFIX);
+	fprintf(log, "Compile-time switches: DO_MAXMIX=%d DO_POLE=%d NO_TRIPS=%d UNMIX=%d NO_TC=%d IMIXD=%d IPOLE=%d ROOTFIX=%d\n",
+		DO_MAXMIX, DO_POLE, NO_TRIPS, UNMIX, NO_TC, IMIXD, IPOLE, ROOTFIX);
 	fprintf(log, "***********************\n\n");
 
 	logAnalysis(log, nt);
@@ -1380,8 +1347,6 @@ void
 
 	// Print apographic taxa by variant
 	logAnnote(lg, nt, -1);
-
-	fprintf(log, "\n");
 
 	logLinks(log, nt);
 	logMixes(log, nt, ns);

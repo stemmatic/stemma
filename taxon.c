@@ -278,8 +278,13 @@ Length
 	for (vv = 0; vv < taxa->nVunits; vv++)
 		pole += txBase(taxa,node)[vv] != 1;		// STATES[1] == '0'
 #else
+	// Pro-rate according to attested sites
 	Length attested = 0;
 	for (vv = 0; vv < taxa->nVunits; vv++) {
+#if IPOLE
+		if (txIsSingular(taxa,node)[vv])
+			continue;
+#endif
 		vunit vu = txBase(taxa,node)[vv];
 		if (vu != MISSING) {
 			pole += txBase(taxa,node)[vv] != 1;		// STATES[1] == '0'

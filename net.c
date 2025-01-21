@@ -459,20 +459,6 @@ int
 
 
 #if DO_POLE
-static Length
-	ntPoleStretch(Net *nt, Cursor to)
-{
-	// R:: Consider do-while() loop, and init hi,lo to first
-	Length hi = 0L, lo = ~0L;
-	for (Cursor up = nt->Ups[to]; up != ERR; up = nt->br[up].nxtUp) {
-		Cursor p = nt->br[up].fr;
-		Length pole = nt->poles[p];
-		if (pole > hi) hi = pole;
-		if (pole < lo) lo = pole;
-	}
-	return hi-lo;
-}
-
 int
 	ntPoleCheck(Net *nt, Cursor to)
 {
@@ -494,7 +480,24 @@ int
 #endif
 
 	Length toPole = nt->poles[to];
-	Length stretch = ntPoleStretch(nt, to);
+	Length stretch = 0L;
+
+	// R:: Consider do-while() loop, and init hi,lo to first
+	Length hi = 0L, lo = ~0L;
+	for (Cursor up = nt->Ups[to]; up != ERR; up = nt->br[up].nxtUp) {
+		Cursor p = nt->br[up].fr;
+		Length pole = nt->poles[p];
+		if (pole > hi) hi = pole;
+		if (pole < lo) lo = pole;
+	}
+#if IMIXD
+	toPole -= txNSings(nt->taxa,to);
+#endif
+#if NO_TC
+	if (toPole < lo)
+		return NO;
+#endif
+	stretch = hi-lo;
 	return stretch <= toPole;
 }
 
@@ -1009,6 +1012,9 @@ static Length
 		if (pole < lo) lo = pole;
 	}
 	toPos = nt->poles[to];
+#if IMIXD
+	toPos -= txNSings(tx,to);
+#endif
 #endif
 
 	for (from = 0; from < nt->maxTax; from++) {
@@ -1026,6 +1032,10 @@ static Length
 		frPos = nt->poles[from];
 		Length hi2 = (frPos > hi) ? frPos : hi;
 		Length lo2 = (frPos < lo) ? frPos : lo;
+#if NO_TC
+		if (toPos < lo2)
+			continue;
+#endif
 		if (hi2 - lo2 > toPos)
 			continue;
 #endif
